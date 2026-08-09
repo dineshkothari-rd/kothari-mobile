@@ -9,10 +9,20 @@ import { SignInScreen } from '../features/auth/SignInScreen';
 import { useAdminSession } from '../features/auth/useAdminSession';
 import { WorkspaceScreen } from '../features/admin/WorkspaceScreen';
 import { AppErrorBoundary } from '../shared/components/AppErrorBoundary';
-import { radius, spacing, typography, useAppTheme, type AppColors } from '../design/tokens';
+import { AppThemeProvider, radius, spacing, typography, useAppTheme, type AppColors } from '../design/tokens';
 import { LanguageProvider, useLanguage } from '../shared/i18n/LanguageProvider';
 
 export function AppShell() {
+  return (
+    <AppThemeProvider>
+      <LanguageProvider>
+        <AppShellContent />
+      </LanguageProvider>
+    </AppThemeProvider>
+  );
+}
+
+function AppShellContent() {
   const session = useAdminSession();
   const { colors, isDark } = useAppTheme();
   const styles = createStyles(colors);
@@ -24,22 +34,20 @@ export function AppShell() {
   }, [colors.canvas, colors.surface, isDark]);
 
   return (
-    <LanguageProvider>
-      <AppErrorBoundary>
-        <View style={styles.safeArea}>
-          <StatusBar style={isDark ? 'light' : 'dark'} />
-          {!firebaseConfigStatus.ready ? (
-            <MissingConfigScreen />
-          ) : session.status === 'checking' ? (
-            <CheckingScreen styles={styles} colors={colors} />
-          ) : session.admin ? (
-            <WorkspaceScreen admin={session.admin} onSignOut={session.signOut} />
-          ) : (
-            <SignInScreen error={session.error} loading={session.submitting} onSignIn={session.signIn} />
-          )}
-        </View>
-      </AppErrorBoundary>
-    </LanguageProvider>
+    <AppErrorBoundary>
+      <View style={styles.safeArea}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
+        {!firebaseConfigStatus.ready ? (
+          <MissingConfigScreen />
+        ) : session.status === 'checking' ? (
+          <CheckingScreen styles={styles} colors={colors} />
+        ) : session.admin ? (
+          <WorkspaceScreen admin={session.admin} onSignOut={session.signOut} />
+        ) : (
+          <SignInScreen error={session.error} loading={session.submitting} onSignIn={session.signIn} />
+        )}
+      </View>
+    </AppErrorBoundary>
   );
 }
 

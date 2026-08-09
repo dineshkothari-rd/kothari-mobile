@@ -50,7 +50,7 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
           </View>
         </View>
         <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.exitButton}>
-          <Text style={styles.exitText}>{t('Exit')}</Text>
+          <Text style={styles.exitText}>{t('Logout')}</Text>
         </Pressable>
       </View>
 

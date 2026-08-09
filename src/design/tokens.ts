@@ -1,3 +1,5 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createContext, createElement, useContext, useEffect, useMemo, useState, type PropsWithChildren } from 'react';
 import { useColorScheme } from 'react-native';
 
 export const lightColors = {
@@ -67,21 +69,82 @@ export const darkColors: typeof lightColors = {
 };
 
 export type AppColorScheme = 'light' | 'dark';
+export type ThemePreference = 'system' | AppColorScheme;
 export type AppColors = typeof lightColors;
+
+const THEME_STORAGE_KEY = 'kothari.theme';
+
+type ThemeContextValue = {
+  colors: AppColors;
+  isDark: boolean;
+  scheme: AppColorScheme;
+  setThemePreference: (preference: ThemePreference) => void;
+  themeOptions: Array<{ label: string; value: ThemePreference }>;
+  themePreference: ThemePreference;
+};
+
+const themeOptions: Array<{ label: string; value: ThemePreference }> = [
+  { label: 'System', value: 'system' },
+  { label: 'Light', value: 'light' },
+  { label: 'Dark', value: 'dark' },
+];
+
+const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function getColors(scheme: AppColorScheme) {
   return scheme === 'dark' ? darkColors : lightColors;
 }
 
-export function useAppTheme() {
+export function AppThemeProvider({ children }: PropsWithChildren) {
   const deviceScheme = useColorScheme();
-  const scheme: AppColorScheme = deviceScheme === 'dark' ? 'dark' : 'light';
+  const [themePreference, setThemePreferenceState] = useState<ThemePreference>('system');
+  const systemScheme: AppColorScheme = deviceScheme === 'dark' ? 'dark' : 'light';
+  const scheme: AppColorScheme = themePreference === 'system' ? systemScheme : themePreference;
   const colors = getColors(scheme);
 
+  useEffect(() => {
+    AsyncStorage.getItem(THEME_STORAGE_KEY)
+      .then((value) => {
+        if (value === 'system' || value === 'light' || value === 'dark') setThemePreferenceState(value);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  function setThemePreference(nextPreference: ThemePreference) {
+    setThemePreferenceState(nextPreference);
+    AsyncStorage.setItem(THEME_STORAGE_KEY, nextPreference).catch(() => undefined);
+  }
+
+  const value = useMemo<ThemeContextValue>(
+    () => ({
+      colors,
+      isDark: scheme === 'dark',
+      scheme,
+      setThemePreference,
+      themeOptions,
+      themePreference,
+    }),
+    [colors, scheme, themePreference],
+  );
+
+  return createElement(ThemeContext.Provider, { value }, children);
+}
+
+export function useAppTheme() {
+  const deviceScheme = useColorScheme();
+  const context = useContext(ThemeContext);
+
+  if (context) return context;
+
+  const scheme: AppColorScheme = deviceScheme === 'dark' ? 'dark' : 'light';
+
   return {
-    colors,
+    colors: getColors(scheme),
     isDark: scheme === 'dark',
     scheme,
+    setThemePreference: () => undefined,
+    themeOptions,
+    themePreference: 'system' as ThemePreference,
   };
 }
 
