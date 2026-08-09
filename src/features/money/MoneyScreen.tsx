@@ -12,6 +12,9 @@ import {
   Text,
   View,
 } from 'react-native';
+import { File, Paths } from 'expo-file-system';
+import * as Print from 'expo-print';
+import * as Sharing from 'expo-sharing';
 import { addDoc, collection, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
@@ -185,6 +188,225 @@ function openWhatsApp(due: DueRecord) {
   Linking.openURL(`https://wa.me/${phone}?text=${message}`).catch(() => undefined);
 }
 
+function getDocumentTitle(businessType: string, documentType: 'bill' | 'receipt', t: (text: string) => string) {
+  const type = getBusinessType(businessType);
+  const prefix = t(type.label);
+
+  if (documentType === 'bill') {
+    if (type.id === 'hotel') return `${prefix} ${t('Stay bill')}`;
+    if (type.id === 'library') return `${prefix} ${t('Membership bill')}`;
+    return `${prefix} ${t('Monthly bill')}`;
+  }
+
+  if (type.id === 'hotel') return `${prefix} ${t('Stay receipt')}`;
+  if (type.id === 'library') return `${prefix} ${t('Membership receipt')}`;
+  return `${prefix} ${t('Payment receipt')}`;
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function getDocumentFileName(title: string, customerName: string, period: string) {
+  const cleanName = `${title}-${customerName}-${period || new Date().toISOString().slice(0, 10)}`
+    .replace(/[^a-z0-9]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase();
+
+  return `kothari-${cleanName}.pdf`;
+}
+
+function buildDocumentHtml({
+  balance,
+  customer,
+  documentNumber,
+  generatedAt,
+  labels,
+  lineItems,
+  meta,
+  paid,
+  status,
+  title,
+  total,
+}: {
+  balance: string;
+  customer: string;
+  documentNumber: string;
+  generatedAt: string;
+  labels: {
+    amount: string;
+    balance: string;
+    charges: string;
+    customer: string;
+    description: string;
+    generatedOn: string;
+    name: string;
+    paid: string;
+    status: string;
+    total: string;
+  };
+  lineItems: Array<{ label: string; value: string }>;
+  meta: Array<{ label: string; value: string }>;
+  paid: string;
+  status: string;
+  title: string;
+  total: string;
+}) {
+  return `
+    <!doctype html>
+    <html>
+      <head>
+        <meta charset="utf-8" />
+        <style>
+          body { color: #17212B; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 0; padding: 32px; }
+          .header { background: #0F172A; border-radius: 16px; color: #FFFFFF; padding: 28px; }
+          .brand { color: #BFE6FF; font-size: 13px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; }
+          h1 { font-size: 30px; margin: 8px 0 0; }
+          .doc { color: #C8D4DE; font-size: 13px; margin-top: 8px; }
+          .section { border: 1px solid #E2E8F0; border-radius: 14px; margin-top: 20px; padding: 18px; }
+          .section-title { color: #64748B; font-size: 12px; font-weight: 800; margin-bottom: 12px; text-transform: uppercase; }
+          .grid { display: grid; gap: 12px; grid-template-columns: 1fr 1fr; }
+          .cell { background: #F8FAFC; border-radius: 12px; padding: 12px; }
+          .label { color: #64748B; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+          .value { color: #0F172A; font-size: 15px; font-weight: 800; margin-top: 4px; }
+          table { border-collapse: collapse; margin-top: 12px; width: 100%; }
+          th { color: #64748B; font-size: 11px; text-align: left; text-transform: uppercase; }
+          td, th { border-bottom: 1px solid #E2E8F0; padding: 12px 0; }
+          td:last-child, th:last-child { text-align: right; }
+          .totals { margin-left: auto; margin-top: 18px; width: 320px; }
+          .total-row { display: flex; justify-content: space-between; padding: 8px 0; }
+          .total-row strong { font-size: 18px; }
+          .footer { color: #64748B; font-size: 12px; margin-top: 28px; text-align: center; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <div class="brand">Kothari</div>
+          <h1>${escapeHtml(title)}</h1>
+          <div class="doc">${escapeHtml(documentNumber)}</div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">${escapeHtml(labels.customer)}</div>
+          <div class="grid">
+            <div class="cell"><div class="label">${escapeHtml(labels.name)}</div><div class="value">${escapeHtml(customer)}</div></div>
+            <div class="cell"><div class="label">${escapeHtml(labels.status)}</div><div class="value">${escapeHtml(status)}</div></div>
+            ${meta.map((item) => `<div class="cell"><div class="label">${escapeHtml(item.label)}</div><div class="value">${escapeHtml(item.value)}</div></div>`).join('')}
+          </div>
+        </div>
+
+        <div class="section">
+          <div class="section-title">${escapeHtml(labels.charges)}</div>
+          <table>
+            <thead><tr><th>${escapeHtml(labels.description)}</th><th>${escapeHtml(labels.amount)}</th></tr></thead>
+            <tbody>
+              ${lineItems.map((item) => `<tr><td>${escapeHtml(item.label)}</td><td>${escapeHtml(item.value)}</td></tr>`).join('')}
+            </tbody>
+          </table>
+          <div class="totals">
+            <div class="total-row"><span>${escapeHtml(labels.total)}</span><strong>${escapeHtml(total)}</strong></div>
+            <div class="total-row"><span>${escapeHtml(labels.paid)}</span><strong>${escapeHtml(paid)}</strong></div>
+            <div class="total-row"><span>${escapeHtml(labels.balance)}</span><strong>${escapeHtml(balance)}</strong></div>
+          </div>
+        </div>
+
+        <div class="footer">${escapeHtml(labels.generatedOn)} ${escapeHtml(generatedAt)}</div>
+      </body>
+    </html>
+  `;
+}
+
+function getPdfLabels(t: (text: string) => string) {
+  return {
+    amount: t('Amount'),
+    balance: t('Balance'),
+    charges: t('Charges'),
+    customer: t('Customer'),
+    description: t('Description'),
+    generatedOn: t('Generated on'),
+    name: t('Name'),
+    paid: t('Paid'),
+    status: t('Status'),
+    total: t('Total'),
+  };
+}
+
+function buildBillHtml(due: DueRecord, t: (text: string) => string) {
+  const type = getBusinessType(due.businessType);
+  const title = getDocumentTitle(due.businessType, 'bill', t);
+  const allocation = getCustomerAllocationLabel({ businessType: due.businessType, room: due.tenantRoom });
+
+  return buildDocumentHtml({
+    balance: money(due.balance),
+    customer: due.tenantName,
+    documentNumber: `${t('Bill for')} ${due.month}`,
+    generatedAt: new Date().toLocaleString('en-IN'),
+    labels: getPdfLabels(t),
+    lineItems: [{ label: t(type.feeLabel), value: money(due.rent) }],
+    meta: [
+      { label: t(type.unitLabel), value: allocation },
+      { label: t('Month'), value: due.month },
+    ],
+    paid: money(due.paid),
+    status: t(due.status),
+    title,
+    total: money(due.rent),
+  });
+}
+
+function buildReceiptHtml(payment: PaymentRecord, tenants: TenantRecord[], t: (text: string) => string) {
+  const businessType = getPaymentBusinessType(payment, tenants);
+  const type = getBusinessType(businessType);
+  const title = getDocumentTitle(businessType, 'receipt', t);
+  const allocation = getPaymentAllocationLabel(payment, tenants);
+  const balance = toNumber(payment.balance);
+  const note = payment.note ? [{ label: t('Note'), value: String(payment.note) }] : [];
+
+  return buildDocumentHtml({
+    balance: money(balance),
+    customer: getPaymentTenantName(payment, tenants),
+    documentNumber: `${t('Receipt no')}: ${String(payment.id || '').slice(-8).toUpperCase() || '-'}`,
+    generatedAt: new Date().toLocaleString('en-IN'),
+    labels: getPdfLabels(t),
+    lineItems: [{ label: t('Amount paid'), value: money(getPaymentAmount(payment)) }],
+    meta: [
+      { label: t(type.unitLabel), value: allocation },
+      { label: t('Month'), value: payment.month || '-' },
+      { label: t('Paid on'), value: payment.paidOn || '-' },
+      ...note,
+    ],
+    paid: money(getPaymentAmount(payment)),
+    status: t(getPaymentStatus(payment)),
+    title,
+    total: money(payment.totalRent),
+  });
+}
+
+async function downloadPdf({ fileName, html, title }: { fileName: string; html: string; title: string }) {
+  const { uri } = await Print.printToFileAsync({ base64: false, html });
+  const generatedFile = new File(uri);
+  const namedFile = new File(Paths.cache, fileName);
+
+  if (namedFile.exists) namedFile.delete();
+  generatedFile.copy(namedFile);
+
+  if (!(await Sharing.isAvailableAsync())) {
+    await Print.printAsync({ uri: namedFile.uri });
+    return;
+  }
+
+  await Sharing.shareAsync(namedFile.uri, {
+    dialogTitle: title,
+    mimeType: 'application/pdf',
+    UTI: 'com.adobe.pdf',
+  });
+}
+
 export function MoneyScreen() {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
@@ -286,6 +508,37 @@ export function MoneyScreen() {
         },
       ],
     );
+  }
+
+  async function downloadBill(due: DueRecord) {
+    setActionError('');
+
+    try {
+      const title = getDocumentTitle(due.businessType, 'bill', t);
+      await downloadPdf({
+        fileName: getDocumentFileName(title, due.tenantName, due.month),
+        html: buildBillHtml(due, t),
+        title,
+      });
+    } catch (shareError) {
+      setActionError(shareError instanceof Error ? shareError.message : t('Could not prepare bill.'));
+    }
+  }
+
+  async function downloadReceipt(payment: PaymentRecord) {
+    setActionError('');
+
+    try {
+      const businessType = getPaymentBusinessType(payment, tenants.data);
+      const title = getDocumentTitle(businessType, 'receipt', t);
+      await downloadPdf({
+        fileName: getDocumentFileName(title, getPaymentTenantName(payment, tenants.data), payment.month || payment.paidOn || ''),
+        html: buildReceiptHtml(payment, tenants.data, t),
+        title,
+      });
+    } catch (shareError) {
+      setActionError(shareError instanceof Error ? shareError.message : t('Could not prepare receipt.'));
+    }
   }
 
   return (
@@ -417,7 +670,7 @@ export function MoneyScreen() {
           visibleDues
             .slice(0, 50)
             .map((due) => (
-              <DueCard due={due} key={due.id} onRecordPayment={() => openPaymentForm(due.tenantId, due.balance)} styles={styles} />
+              <DueCard due={due} key={due.id} onDownloadBill={() => downloadBill(due)} onRecordPayment={() => openPaymentForm(due.tenantId, due.balance)} styles={styles} />
             ))
         ) : (
           <EmptyMoneyState clearFilters={clearFilters} styles={styles} />
@@ -430,6 +683,7 @@ export function MoneyScreen() {
               deleting={deletingPaymentId === payment.id}
               key={payment.id}
               onDelete={() => confirmDeletePayment(payment)}
+              onDownloadReceipt={() => downloadReceipt(payment)}
               payment={payment}
               styles={styles}
               tenants={tenants.data}
@@ -627,10 +881,12 @@ function HeroMetric({
 
 function DueCard({
   due,
+  onDownloadBill,
   onRecordPayment,
   styles,
 }: {
   due: DueRecord;
+  onDownloadBill: () => void;
   onRecordPayment: () => void;
   styles: ReturnType<typeof createStyles>;
 }) {
@@ -666,6 +922,9 @@ function DueCard({
         <Pressable onPress={onRecordPayment} style={[styles.actionButton, styles.actionButtonSurface]}>
           <Text style={styles.actionTextAlt}>{t('Record')}</Text>
         </Pressable>
+        <Pressable onPress={onDownloadBill} style={[styles.actionButton, styles.actionButtonSurface]}>
+          <Text style={styles.actionTextAlt}>{t('Bill')}</Text>
+        </Pressable>
       </View>
     </View>
   );
@@ -674,12 +933,14 @@ function DueCard({
 function PaymentCard({
   deleting,
   onDelete,
+  onDownloadReceipt,
   payment,
   styles,
   tenants,
 }: {
   deleting: boolean;
   onDelete: () => void;
+  onDownloadReceipt: () => void;
   payment: PaymentRecord;
   styles: ReturnType<typeof createStyles>;
   tenants: TenantRecord[];
@@ -708,9 +969,14 @@ function PaymentCard({
       </View>
 
       {payment.note ? <Text style={styles.note}>{String(payment.note)}</Text> : null}
-      <Pressable disabled={deleting} onPress={onDelete} style={[styles.deleteButton, deleting && styles.disabledAction]}>
-        <Text style={styles.deleteButtonText}>{t(deleting ? 'Deleting...' : 'Delete payment')}</Text>
-      </Pressable>
+      <View style={styles.actions}>
+        <Pressable onPress={onDownloadReceipt} style={[styles.actionButton, styles.actionButtonSurface]}>
+          <Text style={styles.actionTextAlt}>{t('Receipt')}</Text>
+        </Pressable>
+        <Pressable disabled={deleting} onPress={onDelete} style={[styles.actionButton, styles.deleteInlineButton, deleting && styles.disabledAction]}>
+          <Text style={styles.deleteInlineText}>{t(deleting ? 'Deleting...' : 'Delete payment')}</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -1035,6 +1301,7 @@ function createStyles(colors: AppColors) {
     },
     actions: {
       flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: spacing.sm,
       marginTop: spacing.md,
     },
@@ -1043,6 +1310,7 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.ink,
       borderRadius: radius.md,
       flex: 1,
+      minWidth: '46%',
       minHeight: 44,
       justifyContent: 'center',
     },
@@ -1074,6 +1342,14 @@ function createStyles(colors: AppColors) {
       justifyContent: 'center',
     },
     deleteButtonText: {
+      color: colors.danger,
+      fontSize: 13,
+      fontWeight: typography.weight.black,
+    },
+    deleteInlineButton: {
+      backgroundColor: colors.dangerSoft,
+    },
+    deleteInlineText: {
       color: colors.danger,
       fontSize: 13,
       fontWeight: typography.weight.black,

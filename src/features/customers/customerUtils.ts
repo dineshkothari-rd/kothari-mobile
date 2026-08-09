@@ -25,7 +25,7 @@ export function matchesCustomerSearch(customer: TenantRecord, search: string) {
 
   if (!query) return true;
 
-  return [getCustomerName(customer), customer.room, customer.phone, customer.email]
+  return [getCustomerName(customer), customer.room, customer.phone, customer.email, customer.documentId]
     .some((value) => String(value || '').toLowerCase().includes(query));
 }
 

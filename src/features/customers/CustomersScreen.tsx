@@ -31,6 +31,7 @@ import { getRoomOccupancy, getRoomSummary, parseRoomLabel, roomNumbers } from '.
 
 type CustomerDraft = {
   businessType: string;
+  documentId: string;
   email: string;
   idProof: string | null;
   idProofName: string | null;
@@ -51,6 +52,7 @@ type CustomerDraft = {
 
 const initialForm = {
   businessType: 'pg',
+  documentId: '',
   email: '',
   idProof: null as string | null,
   idProofName: null as string | null,
@@ -248,7 +250,7 @@ export function CustomersScreen() {
       <TextInput
         autoCapitalize="none"
         onChangeText={setSearch}
-        placeholder="Name, room, seat, phone..."
+        placeholder="Name, room, phone, document ID..."
         placeholderTextColor={colors.muted}
         style={styles.search}
         value={search}
@@ -383,6 +385,7 @@ function CustomerFormSheet({
   const [form, setForm] = useState(() => ({
     ...initialForm,
     businessType: customer?.businessType || initialForm.businessType,
+    documentId: customer?.documentId || '',
     email: customer?.email || '',
     idProof: customer?.idProof || null,
     idProofName: customer?.idProofName || null,
@@ -611,6 +614,7 @@ function CustomerFormSheet({
 
     onSubmit({
       businessType: form.businessType,
+      documentId: form.documentId.trim(),
       email: form.email.trim(),
       idProof: form.idProof,
       idProofName: form.idProofName,
@@ -805,7 +809,10 @@ function CustomerFormSheet({
                   ))}
                 </View>
 
-                <Text style={styles.formLabel}>{t('ID proof')}</Text>
+                <Text style={styles.formLabel}>{t('Document ID')}</Text>
+                <TextField autoCapitalize="characters" label="Document number" onChangeText={(value) => updateField('documentId', value)} placeholder="Aadhaar, PAN, passport..." value={form.documentId} />
+
+                <Text style={styles.formLabel}>{t('Document image')}</Text>
                 <View style={styles.proofBox}>
                   {form.idProof ? (
                     <>

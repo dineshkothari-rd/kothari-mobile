@@ -5,6 +5,7 @@ export type FirestoreRecord = {
 
 export type TenantRecord = FirestoreRecord & {
   businessType?: string;
+  documentId?: string;
   fullName?: string;
   email?: string;
   idProof?: string | null;

@@ -53,6 +53,7 @@ export function CustomerCard({ customer, deleting = false, expanded, onDelete, o
       <View style={styles.detailGrid}>
         <Detail label={t(businessType.feeLabel)} styles={styles} value={money(customer.rent)} />
         <Detail action={callCustomer} label={t('Phone')} styles={styles} value={customer.phone || '-'} />
+        <Detail label={t('Document ID')} styles={styles} value={customer.documentId || '-'} />
         <Detail label={t(businessType.startDateLabel)} styles={styles} value={customer.moveInDate || '-'} />
         <Detail label={t(businessType.endDateLabel)} styles={styles} value={customer.moveOutDate || '-'} />
       </View>
