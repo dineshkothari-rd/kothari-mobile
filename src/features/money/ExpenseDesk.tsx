@@ -19,6 +19,7 @@ import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import type { ExpenseRecord, PaymentRecord } from '../../shared/types/records';
 import { money, toNumber } from '../../shared/utils/money';
+import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import { FilterPill } from '../customers/FilterPill';
 import { getCollectedTotal, getExpenseAmount, getMonthDisplay, matchesMonth } from '../operations/operationsMath';
 import { editableExpenseCategories, expenseCategories, getExpenseCategory } from './expenseCategories';
@@ -60,6 +61,7 @@ function getExpenseTotal(expenses: ExpenseRecord[]) {
 
 export function ExpenseDesk({ month }: { month: string }) {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
@@ -108,7 +110,7 @@ export function ExpenseDesk({ month }: { month: string }) {
       });
       setShowForm(false);
     } catch (createError) {
-      setActionError(createError instanceof Error ? createError.message : 'Could not save expense.');
+      setActionError(createError instanceof Error ? createError.message : t('Could not save expense.'));
     } finally {
       setSaving(false);
     }
@@ -121,16 +123,16 @@ export function ExpenseDesk({ month }: { month: string }) {
     try {
       await deleteDoc(doc(db, 'expenses', expenseId));
     } catch (deleteError) {
-      setActionError(deleteError instanceof Error ? deleteError.message : 'Could not delete expense.');
+      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete expense.'));
     } finally {
       setDeletingId('');
     }
   }
 
   function confirmDelete(expense: ExpenseRecord) {
-    Alert.alert('Delete expense?', `Delete ${getExpenseTitle(expense)} for ${money(getExpenseAmount(expense))}?`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteExpense(expense.id) },
+    Alert.alert(t('Delete expense?'), `${t('Delete')} ${getExpenseTitle(expense)} ${t('for')} ${money(getExpenseAmount(expense))}?`, [
+      { text: t('Cancel'), style: 'cancel' },
+      { text: t('Delete'), style: 'destructive', onPress: () => deleteExpense(expense.id) },
     ]);
   }
 
@@ -144,24 +146,24 @@ export function ExpenseDesk({ month }: { month: string }) {
         <View style={styles.panelTop}>
           <View>
             <Text style={styles.kicker}>{getMonthDisplay(month)}</Text>
-            <Text style={styles.title}>Cash flow</Text>
+            <Text style={styles.title}>{t('Cash flow')}</Text>
           </View>
           <Pressable onPress={() => setShowForm(true)} style={styles.addButton}>
-            <Text style={styles.addButtonText}>Add expense</Text>
+            <Text style={styles.addButtonText}>{t('Add expense')}</Text>
           </Pressable>
         </View>
 
         <View style={styles.metrics}>
-          <Metric label="Income" styles={styles} value={money(income)} />
-          <Metric danger label="Expenses" styles={styles} value={money(allExpenseTotal)} />
-          <Metric danger={net < 0} label="Net" styles={styles} value={money(net)} />
+          <Metric label={t('Income')} styles={styles} value={money(income)} />
+          <Metric danger label={t('Expenses')} styles={styles} value={money(allExpenseTotal)} />
+          <Metric danger={net < 0} label={t('Net')} styles={styles} value={money(net)} />
         </View>
       </View>
 
       {loading ? (
         <View style={styles.statusRow}>
           <ActivityIndicator color={colors.brand} />
-          <Text style={styles.statusText}>Loading cash flow</Text>
+          <Text style={styles.statusText}>{t('Loading cash flow')}</Text>
         </View>
       ) : null}
 
@@ -178,10 +180,10 @@ export function ExpenseDesk({ month }: { month: string }) {
       </View>
 
       <View style={styles.summaryCard}>
-        <Text style={styles.summaryLabel}>Expenses shown</Text>
+        <Text style={styles.summaryLabel}>{t('Expenses shown')}</Text>
         <Text style={styles.summaryValue}>{money(expenseTotal)}</Text>
         <Text style={styles.summaryMeta}>
-          {visibleExpenses.length} expenses in {getMonthDisplay(month)}
+          {visibleExpenses.length} {t('expenses in')} {getMonthDisplay(month)}
         </Text>
       </View>
 
@@ -197,10 +199,10 @@ export function ExpenseDesk({ month }: { month: string }) {
         ))
       ) : (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No expenses found</Text>
-          <Text style={styles.emptyText}>Add an expense or change the filters.</Text>
+          <Text style={styles.emptyTitle}>{t('No expenses found')}</Text>
+          <Text style={styles.emptyText}>{t('Add an expense or change the filters.')}</Text>
           <Pressable onPress={monthlyExpenses.length ? clearFilters : () => setShowForm(true)} style={styles.emptyAction}>
-            <Text style={styles.emptyActionText}>{monthlyExpenses.length ? 'Clear filters' : 'Add expense'}</Text>
+            <Text style={styles.emptyActionText}>{t(monthlyExpenses.length ? 'Clear filters' : 'Add expense')}</Text>
           </Pressable>
         </View>
       )}
@@ -221,6 +223,7 @@ function ExpenseFormSheet({
   saving: boolean;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const { t } = useLanguage();
   const [title, setTitle] = useState('');
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState('maintenance');
@@ -233,17 +236,17 @@ function ExpenseFormSheet({
     const parsedAmount = toNumber(amount);
 
     if (!title.trim()) {
-      setFormError('Expense title is required.');
+      setFormError(t('Expense title is required.'));
       return;
     }
 
     if (!parsedAmount || parsedAmount <= 0) {
-      setFormError('Enter a valid amount.');
+      setFormError(t('Enter a valid amount.'));
       return;
     }
 
     if (!date.trim()) {
-      setFormError('Expense date is required.');
+      setFormError(t('Expense date is required.'));
       return;
     }
 
@@ -265,17 +268,17 @@ function ExpenseFormSheet({
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <View>
-                <Text style={styles.sheetKicker}>Outgoing cost</Text>
-                <Text style={styles.sheetTitle}>Add expense</Text>
+                <Text style={styles.sheetKicker}>{t('Outgoing cost')}</Text>
+                <Text style={styles.sheetTitle}>{t('Add expense')}</Text>
               </View>
               <Pressable disabled={saving} onPress={onClose} style={styles.sheetCloseButton}>
-                <Text style={styles.sheetCloseText}>Close</Text>
+                <Text style={styles.sheetCloseText}>{t('Close')}</Text>
               </Pressable>
             </View>
 
             {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
 
-            <Text style={styles.formLabel}>Category</Text>
+            <Text style={styles.formLabel}>{t('Category')}</Text>
             <View style={styles.filterRail}>
               {editableExpenseCategories.map((item) => (
                 <FilterPill active={category === item.value} key={item.value} label={item.label} onPress={() => setCategory(item.value)} />
@@ -292,10 +295,10 @@ function ExpenseFormSheet({
 
             <View style={styles.sheetActions}>
               <Pressable disabled={saving} onPress={onClose} style={[styles.sheetSecondaryAction, saving && styles.disabledAction]}>
-                <Text style={styles.sheetSecondaryText}>Cancel</Text>
+                <Text style={styles.sheetSecondaryText}>{t('Cancel')}</Text>
               </Pressable>
               <Pressable disabled={saving} onPress={submit} style={[styles.sheetPrimaryAction, saving && styles.disabledAction]}>
-                {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.sheetPrimaryText}>Save expense</Text>}
+                {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.sheetPrimaryText}>{t('Save expense')}</Text>}
               </Pressable>
             </View>
           </ScrollView>
@@ -316,16 +319,17 @@ function ExpenseCard({
   onDelete: () => void;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const { t } = useLanguage();
   const category = getExpenseCategory(expense.category);
 
   return (
     <View style={styles.recordCard}>
       <View style={styles.recordHeader}>
         <View style={styles.recordCopy}>
-          <Text style={styles.recordCategory}>{category.label}</Text>
+          <Text style={styles.recordCategory}>{t(category.label)}</Text>
           <Text style={styles.recordTitle}>{getExpenseTitle(expense)}</Text>
           <Text style={styles.recordMeta}>
-            {getExpenseDate(expense) || 'No date'}
+            {getExpenseDate(expense) || t('No date')}
             {expense.paymentMode ? ` / ${String(expense.paymentMode)}` : ''}
           </Text>
         </View>
@@ -334,7 +338,7 @@ function ExpenseCard({
 
       {expense.note ? <Text style={styles.note}>{String(expense.note)}</Text> : null}
       <Pressable disabled={deleting} onPress={onDelete} style={[styles.deleteButton, deleting && styles.disabledAction]}>
-        <Text style={styles.deleteButtonText}>{deleting ? 'Deleting...' : 'Delete expense'}</Text>
+        <Text style={styles.deleteButtonText}>{t(deleting ? 'Deleting...' : 'Delete expense')}</Text>
       </Pressable>
     </View>
   );

@@ -1,6 +1,7 @@
 import { StyleSheet, Text, View } from 'react-native';
 
 import { radius, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
+import { useLanguage } from '../i18n/LanguageProvider';
 
 type AppBadgeProps = {
   label: string;
@@ -9,12 +10,13 @@ type AppBadgeProps = {
 
 export function AppBadge({ label, tone = 'neutral' }: AppBadgeProps) {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
 
   return (
     <View style={[styles.badge, tone === 'success' && styles.success, tone === 'warning' && styles.warning]}>
       <Text style={[styles.label, tone === 'success' && styles.successText, tone === 'warning' && styles.warningText]}>
-        {label}
+        {t(label)}
       </Text>
     </View>
   );

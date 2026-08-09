@@ -22,6 +22,7 @@ import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import type { TenantRecord } from '../../shared/types/records';
 import { toNumber } from '../../shared/utils/money';
+import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import { businessTypeOptions, getBusinessType } from './businessTypes';
 import { CustomerCard } from './CustomerCard';
 import { customerStatusOptions, getCustomerStatus, matchesCustomerSearch } from './customerUtils';
@@ -72,6 +73,7 @@ const activeAllocationStatuses = ['active', 'booked', 'checked in', 'occupied'];
 
 export function CustomersScreen() {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
   const [search, setSearch] = useState('');
@@ -145,7 +147,7 @@ export function CustomersScreen() {
       setShowForm(false);
       setEditingCustomer(null);
     } catch (saveError) {
-      setActionError(saveError instanceof Error ? saveError.message : 'Could not save customer.');
+      setActionError(saveError instanceof Error ? saveError.message : t('Could not save customer.'));
     } finally {
       setSaving(false);
     }
@@ -158,16 +160,16 @@ export function CustomersScreen() {
     try {
       await deleteDoc(doc(db, 'tenants', customerId));
     } catch (deleteError) {
-      setActionError(deleteError instanceof Error ? deleteError.message : 'Could not delete customer.');
+      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete customer.'));
     } finally {
       setDeletingId('');
     }
   }
 
   function confirmDelete(customer: TenantRecord) {
-    Alert.alert('Delete customer?', `Delete ${customer.name || 'this customer'}? This cannot be undone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteCustomer(customer.id) },
+    Alert.alert(t('Delete customer?'), `${t('Delete')} ${customer.name || t('this customer')}? ${t('This cannot be undone.')}`, [
+      { text: t('Cancel'), style: 'cancel' },
+      { text: t('Delete'), style: 'destructive', onPress: () => deleteCustomer(customer.id) },
     ]);
   }
 
@@ -191,26 +193,26 @@ export function CustomersScreen() {
       <View style={styles.hero}>
         <View style={styles.heroTop}>
           <View style={styles.heroCopy}>
-            <Text style={styles.kicker}>Stays & seats</Text>
-            <Text style={styles.title}>{tenants.data.length} customers</Text>
-            <Text style={styles.subtitle}>Manage guests, members, rooms, seats, and contact details.</Text>
+            <Text style={styles.kicker}>{t('Stays & seats')}</Text>
+            <Text style={styles.title}>{tenants.data.length} {t('customers')}</Text>
+            <Text style={styles.subtitle}>{t('Manage guests, members, rooms, seats, and contact details.')}</Text>
           </View>
           <Pressable accessibilityRole="button" onPress={openCreateForm} style={styles.addButton}>
-            <Text style={styles.addButtonText}>Add</Text>
+            <Text style={styles.addButtonText}>{t('Add')}</Text>
           </Pressable>
         </View>
       </View>
 
       <View style={styles.summaryGrid}>
-        <SummaryTile label="Occupied rooms" styles={styles} value={`${roomSummary.occupiedRooms}/${roomSummary.totalRooms}`} />
-        <SummaryTile label="Available rooms" styles={styles} value={roomSummary.availableRooms} />
-        <SummaryTile label="Staying now" styles={styles} value={roomSummary.activeRoomCustomers} />
+        <SummaryTile label={t('Occupied rooms')} styles={styles} value={`${roomSummary.occupiedRooms}/${roomSummary.totalRooms}`} />
+        <SummaryTile label={t('Available rooms')} styles={styles} value={roomSummary.availableRooms} />
+        <SummaryTile label={t('Staying now')} styles={styles} value={roomSummary.activeRoomCustomers} />
       </View>
 
       <View style={styles.modeSwitch}>
         {['All', 'Rooms', 'Needs attention'].map((item) => (
           <Pressable key={item} onPress={() => updateMode(item)} style={[styles.modeItem, mode === item && styles.modeItemActive]}>
-            <Text style={[styles.modeText, mode === item && styles.modeTextActive]}>{item}</Text>
+            <Text style={[styles.modeText, mode === item && styles.modeTextActive]}>{t(item)}</Text>
           </Pressable>
         ))}
       </View>
@@ -230,16 +232,16 @@ export function CustomersScreen() {
               selectedRoom === room.room && styles.roomCardSelected,
             ]}
           >
-            <Text style={[styles.roomNumber, room.status === 'Full' && styles.roomTextFull]}>Room {room.room}</Text>
-            <Text style={[styles.roomStatus, room.status === 'Full' && styles.roomStatusFull]}>{room.status}</Text>
-            <Text style={[styles.roomMeta, room.status === 'Full' && styles.roomMetaFull]}>{room.occupants.length} guest{room.occupants.length === 1 ? '' : 's'}</Text>
+            <Text style={[styles.roomNumber, room.status === 'Full' && styles.roomTextFull]}>{t('Room')} {room.room}</Text>
+            <Text style={[styles.roomStatus, room.status === 'Full' && styles.roomStatusFull]}>{t(room.status)}</Text>
+            <Text style={[styles.roomMeta, room.status === 'Full' && styles.roomMetaFull]}>{room.occupants.length} {t(room.occupants.length === 1 ? 'guest' : 'guests')}</Text>
           </Pressable>
         ))}
       </ScrollView>
 
       {selectedRoom ? (
         <Pressable accessibilityRole="button" onPress={() => setSelectedRoom('')} style={styles.activeRoomFilter}>
-          <Text style={styles.activeRoomFilterText}>Room {selectedRoom} selected. Tap to clear</Text>
+          <Text style={styles.activeRoomFilterText}>{t('Room')} {selectedRoom} {t('selected. Tap to clear')}</Text>
         </Pressable>
       ) : null}
 
@@ -280,7 +282,7 @@ export function CustomersScreen() {
       {tenants.loading ? (
         <View style={styles.statusRow}>
           <ActivityIndicator color={colors.brand} />
-          <Text style={styles.statusText}>Loading customers</Text>
+          <Text style={styles.statusText}>{t('Loading customers')}</Text>
         </View>
       ) : null}
 
@@ -303,14 +305,14 @@ export function CustomersScreen() {
           ))
         ) : (
           <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>Nothing found</Text>
-          <Text style={styles.emptyText}>Try changing the search or filters.</Text>
+            <Text style={styles.emptyTitle}>{t('Nothing found')}</Text>
+            <Text style={styles.emptyText}>{t('Try changing the search or filters.')}</Text>
           </View>
         )}
       </View>
 
       {filtered.length > 40 ? (
-        <Text style={styles.footerText}>Showing first 40 customers. Search to find someone faster.</Text>
+        <Text style={styles.footerText}>{t('Showing first 40 customers. Search to find someone faster.')}</Text>
       ) : null}
     </View>
   );
@@ -377,6 +379,7 @@ function CustomerFormSheet({
   saving: boolean;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const { t } = useLanguage();
   const [form, setForm] = useState(() => ({
     ...initialForm,
     businessType: customer?.businessType || initialForm.businessType,
@@ -468,19 +471,19 @@ function CustomerFormSheet({
   function goToStep(nextStep: CustomerFormStep) {
     if (nextStep === 'details' && !canContinueAllocation) {
       setFormStep('allocation');
-      setFormError(`Name, phone, ${activeType.unitLabel.toLowerCase()} and amount are required.`);
+      setFormError(`${t('Name, phone,')} ${t(activeType.unitLabel).toLowerCase()} ${t('and amount are required.')}`);
       return;
     }
 
     if (nextStep === 'details' && !librarySeatLooksValid) {
       setFormStep('allocation');
-      setFormError('Enter a valid seat like A01, B12, or C08.');
+      setFormError(t('Enter a valid seat like A01, B12, or C08.'));
       return;
     }
 
     if (nextStep === 'details' && !librarySeatAvailable) {
       setFormStep('allocation');
-      setFormError(`${activeType.unitLabel} ${selectedAllocation} is already assigned. Choose another seat.`);
+      setFormError(`${t(activeType.unitLabel)} ${selectedAllocation} ${t('is already assigned. Choose another seat.')}`);
       return;
     }
 
@@ -497,17 +500,17 @@ function CustomerFormSheet({
 
     if (formStep === 'allocation') {
       if (!canContinueAllocation) {
-        setFormError(`Name, phone, ${activeType.unitLabel.toLowerCase()} and amount are required.`);
+        setFormError(`${t('Name, phone,')} ${t(activeType.unitLabel).toLowerCase()} ${t('and amount are required.')}`);
         return;
       }
 
       if (!librarySeatLooksValid) {
-        setFormError('Enter a valid seat like A01, B12, or C08.');
+        setFormError(t('Enter a valid seat like A01, B12, or C08.'));
         return;
       }
 
       if (!librarySeatAvailable) {
-        setFormError(`${activeType.unitLabel} ${selectedAllocation} is already assigned. Choose another seat.`);
+        setFormError(`${t(activeType.unitLabel)} ${selectedAllocation} ${t('is already assigned. Choose another seat.')}`);
         return;
       }
 
@@ -542,7 +545,7 @@ function CustomerFormSheet({
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (!permission.granted) {
-      setFormError('Photo library permission is required to attach ID proof.');
+      setFormError(t('Photo library permission is required to attach ID proof.'));
       return;
     }
 
@@ -558,7 +561,7 @@ function CustomerFormSheet({
     const asset = result.assets[0];
 
     if (!asset?.base64) {
-      setFormError('Could not read selected image.');
+      setFormError(t('Could not read selected image.'));
       return;
     }
 
@@ -590,19 +593,19 @@ function CustomerFormSheet({
 
     if (!form.name.trim() || !form.phone.trim() || !form.room.trim() || !rent) {
       setFormStep('allocation');
-      setFormError(`Name, phone, ${activeType.unitLabel.toLowerCase()} and amount are required.`);
+      setFormError(`${t('Name, phone,')} ${t(activeType.unitLabel).toLowerCase()} ${t('and amount are required.')}`);
       return;
     }
 
     if (!librarySeatLooksValid) {
       setFormStep('allocation');
-      setFormError('Enter a valid seat like A01, B12, or C08.');
+      setFormError(t('Enter a valid seat like A01, B12, or C08.'));
       return;
     }
 
     if (!librarySeatAvailable) {
       setFormStep('allocation');
-      setFormError(`${activeType.unitLabel} ${selectedAllocation} is already assigned. Choose another seat.`);
+      setFormError(`${t(activeType.unitLabel)} ${selectedAllocation} ${t('is already assigned. Choose another seat.')}`);
       return;
     }
 
@@ -635,20 +638,20 @@ function CustomerFormSheet({
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <View>
-                <Text style={styles.sheetKicker}>{activeType.flowLabel}</Text>
-                <Text style={styles.sheetTitle}>{customer ? 'Edit customer' : 'Add customer'}</Text>
+                <Text style={styles.sheetKicker}>{t(activeType.flowLabel)}</Text>
+                <Text style={styles.sheetTitle}>{t(customer ? 'Edit customer' : 'Add customer')}</Text>
               </View>
               <Pressable disabled={saving} onPress={onClose} style={styles.sheetCloseButton}>
-                <Text style={styles.sheetCloseText}>Close</Text>
+                <Text style={styles.sheetCloseText}>{t('Close')}</Text>
               </Pressable>
             </View>
 
             {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
 
             <View style={styles.businessContext}>
-              <Text style={styles.businessContextLabel}>{customer ? 'Editing for' : 'Adding for'}</Text>
-              <Text style={styles.businessContextTitle}>{activeType.label}</Text>
-              <Text style={styles.businessContextMeta}>{activeType.flowLabel}</Text>
+              <Text style={styles.businessContextLabel}>{t(customer ? 'Editing for' : 'Adding for')}</Text>
+              <Text style={styles.businessContextTitle}>{t(activeType.label)}</Text>
+              <Text style={styles.businessContextMeta}>{t(activeType.flowLabel)}</Text>
             </View>
 
             <View style={styles.formStepper}>
@@ -663,7 +666,7 @@ function CustomerFormSheet({
                     style={[styles.stepperItem, active && styles.stepperItemActive]}
                   >
                     <Text style={[styles.stepperIndex, active && styles.stepperIndexActive]}>{index + 1}</Text>
-                    <Text style={[styles.stepperText, active && styles.stepperTextActive]} numberOfLines={1}>{step.label}</Text>
+                    <Text style={[styles.stepperText, active && styles.stepperTextActive]} numberOfLines={1}>{t(step.label)}</Text>
                   </Pressable>
                 );
               })}
@@ -671,13 +674,13 @@ function CustomerFormSheet({
 
             {formStep === 'business' ? (
               <>
-                <Text style={styles.formLabel}>Business type</Text>
+                <Text style={styles.formLabel}>{t('Business type')}</Text>
                 <View style={styles.sheetFilters}>
                   {businessTypeOptions.map((type) => (
                     <FilterPill active={form.businessType === type.id} key={type.id} label={type.label} onPress={() => updateBusinessType(type.id)} />
                   ))}
                 </View>
-                <Text style={styles.detailHint}>{activeType.detailsHint}</Text>
+                <Text style={styles.detailHint}>{t(activeType.detailsHint)}</Text>
               </>
             ) : null}
 
@@ -688,10 +691,10 @@ function CustomerFormSheet({
                   <TextField keyboardType="phone-pad" label="Phone" onChangeText={(value) => updateField('phone', value)} placeholder="Phone number" value={form.phone} />
                 </View>
 
-                <Text style={styles.formLabel}>{activeType.unitLabel}</Text>
+                <Text style={styles.formLabel}>{t(activeType.unitLabel)}</Text>
                 <View style={styles.roomPickerHeader}>
-                  <Text style={styles.roomPickerTitle}>{activeType.allocationTitle}</Text>
-                  <Text style={styles.roomPickerMeta}>{activeType.allocationHelp}</Text>
+                  <Text style={styles.roomPickerTitle}>{t(activeType.allocationTitle)}</Text>
+                  <Text style={styles.roomPickerMeta}>{t(activeType.allocationHelp)}</Text>
                 </View>
                 {form.businessType === 'library' ? (
                   <>
@@ -716,19 +719,19 @@ function CustomerFormSheet({
                           ]}
                         >
                           {!librarySeatLooksValid
-                            ? 'Invalid seat format'
+                              ? t('Invalid seat format')
                             : librarySeatAvailable
                               ? selectedAllocationIsCurrent
-                                ? `Seat ${selectedAllocation} is current`
-                                : `Seat ${selectedAllocation} is available`
-                              : `Seat ${selectedAllocation} is already assigned`}
+                                ? `${t('Seat')} ${selectedAllocation} ${t('is current')}`
+                                : `${t('Seat')} ${selectedAllocation} ${t('is available')}`
+                              : `${t('Seat')} ${selectedAllocation} ${t('is already assigned')}`}
                         </Text>
                         <Text style={styles.allocationStatusMeta}>
-                          {selectedAllocationOccupants.length} active member{selectedAllocationOccupants.length === 1 ? '' : 's'} currently assigned
+                          {selectedAllocationOccupants.length} {t(selectedAllocationOccupants.length === 1 ? 'active member assigned' : 'active members assigned')}
                         </Text>
                       </View>
                     ) : (
-                      <Text style={styles.inlineHelp}>Enter a seat code to check if it is free.</Text>
+                      <Text style={styles.inlineHelp}>{t('Enter a seat code to check if it is free.')}</Text>
                     )}
                   </>
                 ) : availableAllocationOptions.length ? (
@@ -737,8 +740,8 @@ function CustomerFormSheet({
                       const active = getAllocationKey(form.room, form.businessType) === option.allocation;
                       const allocationLabel = `${activeType.unitLabel} ${option.allocation}`;
                       const seatsLabel = option.isCurrent
-                        ? `Current ${activeType.unitLabel.toLowerCase()}`
-                        : `${option.vacantSeats} spot${option.vacantSeats === 1 ? '' : 's'} open`;
+                        ? `${t('Current')} ${t(activeType.unitLabel).toLowerCase()}`
+                        : `${option.vacantSeats} ${t(option.vacantSeats === 1 ? 'spot open' : 'spots open')}`;
 
                       return (
                         <Pressable
@@ -750,7 +753,7 @@ function CustomerFormSheet({
                           <Text style={[styles.roomOptionTitle, active && styles.roomOptionTitleActive]}>{allocationLabel}</Text>
                           <Text style={[styles.roomOptionMeta, active && styles.roomOptionMetaActive]}>{seatsLabel}</Text>
                           <Text style={[styles.roomOptionSubtle, active && styles.roomOptionMetaActive]}>
-                            {option.occupants.length} assigned
+                            {option.occupants.length} {t('assigned')}
                           </Text>
                         </Pressable>
                       );
@@ -758,7 +761,7 @@ function CustomerFormSheet({
                   </View>
                 ) : (
                   <View style={styles.noRoomBox}>
-                    <Text style={styles.noRoomText}>No available {activeType.unitLabel.toLowerCase()} right now.</Text>
+                    <Text style={styles.noRoomText}>{t('No available')} {t(activeType.unitLabel).toLowerCase()} {t('right now.')}</Text>
                   </View>
                 )}
 
@@ -766,7 +769,7 @@ function CustomerFormSheet({
                   <TextField keyboardType="numeric" label={activeType.feeLabel} onChangeText={(value) => updateField('rent', value)} placeholder="Amount" value={form.rent} />
                 </View>
 
-                <Text style={styles.formLabel}>Status</Text>
+                <Text style={styles.formLabel}>{t('Status')}</Text>
                 <View style={styles.sheetFilters}>
                   {activeType.statusOptions
                     .filter((item, index, list) => list.findIndex((entry) => entry.value === item.value) === index && item.value)
@@ -780,7 +783,7 @@ function CustomerFormSheet({
             {formStep === 'details' ? (
               <>
                 <Text style={styles.detailHint}>
-                  {activeType.detailsHint}
+                  {t(activeType.detailsHint)}
                 </Text>
 
                 <View style={styles.formGrid}>
@@ -795,34 +798,34 @@ function CustomerFormSheet({
                   ) : null}
                 </View>
 
-                <Text style={styles.formLabel}>Services</Text>
+                <Text style={styles.formLabel}>{t('Services')}</Text>
                 <View style={styles.sheetFilters}>
                   {activeType.services.map((service) => (
                     <FilterPill active={form.services.includes(service)} key={service} label={service} onPress={() => toggleService(service)} />
                   ))}
                 </View>
 
-                <Text style={styles.formLabel}>ID proof</Text>
+                <Text style={styles.formLabel}>{t('ID proof')}</Text>
                 <View style={styles.proofBox}>
                   {form.idProof ? (
                     <>
-                      <Text style={styles.proofTitle}>{form.idProofName || 'ID proof attached'}</Text>
+                      <Text style={styles.proofTitle}>{form.idProofName || t('ID proof attached')}</Text>
                       <Text style={styles.proofMeta}>{Math.round((form.idProofSize || 0) / 1024)} KB</Text>
                       <View style={styles.proofActions}>
                         <Pressable disabled={saving} onPress={pickIdProof} style={styles.proofAction}>
-                          <Text style={styles.proofActionText}>Replace</Text>
+                          <Text style={styles.proofActionText}>{t('Replace')}</Text>
                         </Pressable>
                         <Pressable disabled={saving} onPress={removeIdProof} style={styles.proofDangerAction}>
-                          <Text style={styles.proofDangerText}>Remove</Text>
+                          <Text style={styles.proofDangerText}>{t('Remove')}</Text>
                         </Pressable>
                       </View>
                     </>
                   ) : (
                     <>
-                      <Text style={styles.proofTitle}>No ID proof attached</Text>
-                      <Text style={styles.proofMeta}>Attach a photo from the device gallery.</Text>
+                      <Text style={styles.proofTitle}>{t('No ID proof attached')}</Text>
+                      <Text style={styles.proofMeta}>{t('Attach a photo from the device gallery.')}</Text>
                       <Pressable disabled={saving} onPress={pickIdProof} style={styles.proofPrimaryAction}>
-                        <Text style={styles.proofPrimaryText}>Attach ID proof</Text>
+                        <Text style={styles.proofPrimaryText}>{t('Attach ID proof')}</Text>
                       </Pressable>
                     </>
                   )}
@@ -832,13 +835,13 @@ function CustomerFormSheet({
 
             <View style={styles.sheetActions}>
               <Pressable disabled={saving} onPress={formStep === 'business' ? onClose : goBack} style={[styles.sheetSecondaryAction, saving && styles.disabledAction]}>
-                <Text style={styles.sheetSecondaryText}>{formStep === 'business' ? 'Cancel' : 'Back'}</Text>
+                <Text style={styles.sheetSecondaryText}>{t(formStep === 'business' ? 'Cancel' : 'Back')}</Text>
               </Pressable>
               <Pressable disabled={saving} onPress={formStep === 'details' ? submit : goNext} style={[styles.sheetPrimaryAction, saving && styles.disabledAction]}>
                 {saving ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
-                  <Text style={styles.sheetPrimaryText}>{formStep === 'details' ? (customer ? 'Save customer' : 'Add customer') : 'Next'}</Text>
+                  <Text style={styles.sheetPrimaryText}>{t(formStep === 'details' ? (customer ? 'Save customer' : 'Add customer') : 'Next')}</Text>
                 )}
               </Pressable>
             </View>
@@ -858,6 +861,8 @@ function IdProofPreview({
   proof: TenantRecord | null;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const { t } = useLanguage();
+
   if (!proof) return null;
 
   const canPreview = String(proof.idProof || '').startsWith('data:image');
@@ -866,17 +871,17 @@ function IdProofPreview({
     <Modal animationType="fade" transparent visible onRequestClose={onClose}>
       <View style={styles.previewBackdrop}>
         <View style={styles.previewPanel}>
-          <Text style={styles.previewTitle}>{proof.idProofName || 'ID proof'}</Text>
+          <Text style={styles.previewTitle}>{proof.idProofName || t('ID proof')}</Text>
           {proof.idProofSize ? <Text style={styles.previewMeta}>{Math.round(proof.idProofSize / 1024)} KB</Text> : null}
           {canPreview ? (
             <Image resizeMode="contain" source={{ uri: proof.idProof || '' }} style={styles.previewImage} />
           ) : (
             <View style={styles.previewEmpty}>
-              <Text style={styles.previewEmptyText}>Preview is available for image ID proofs.</Text>
+              <Text style={styles.previewEmptyText}>{t('Preview is available for image ID proofs.')}</Text>
             </View>
           )}
           <Pressable onPress={onClose} style={styles.previewClose}>
-            <Text style={styles.previewCloseText}>Close</Text>
+            <Text style={styles.previewCloseText}>{t('Close')}</Text>
           </Pressable>
         </View>
       </View>

@@ -1,6 +1,7 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
 
 import { radius, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
+import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
 type FilterPillProps = {
   active: boolean;
@@ -10,6 +11,7 @@ type FilterPillProps = {
 
 export function FilterPill({ active, label, onPress }: FilterPillProps) {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
 
   return (
@@ -18,7 +20,7 @@ export function FilterPill({ active, label, onPress }: FilterPillProps) {
       onPress={onPress}
       style={({ pressed }) => [styles.pill, active && styles.active, pressed && styles.pressed]}
     >
-      <Text style={[styles.label, active && styles.activeLabel]}>{label}</Text>
+      <Text style={[styles.label, active && styles.activeLabel]}>{t(label)}</Text>
     </Pressable>
   );
 }

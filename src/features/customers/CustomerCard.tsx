@@ -3,6 +3,7 @@ import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import type { TenantRecord } from '../../shared/types/records';
 import { money } from '../../shared/utils/money';
+import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import { getBusinessType } from './businessTypes';
 import { getCustomerName, getCustomerStatus, getCustomerSubtitle } from './customerUtils';
 
@@ -18,6 +19,7 @@ type CustomerCardProps = {
 
 export function CustomerCard({ customer, deleting = false, expanded, onDelete, onEdit, onToggle, onViewIdProof }: CustomerCardProps) {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
   const businessType = getBusinessType(customer.businessType);
   const services = Array.isArray(customer.services) ? customer.services : [];
@@ -44,15 +46,15 @@ export function CustomerCard({ customer, deleting = false, expanded, onDelete, o
           <Text style={styles.subtitle}>{getCustomerSubtitle(customer)}</Text>
         </View>
         <View style={styles.statusPill}>
-          <Text style={styles.statusText}>{status}</Text>
+          <Text style={styles.statusText}>{t(status)}</Text>
         </View>
       </View>
 
       <View style={styles.detailGrid}>
-        <Detail label={businessType.feeLabel} styles={styles} value={money(customer.rent)} />
-        <Detail action={callCustomer} label="Phone" styles={styles} value={customer.phone || '-'} />
-        <Detail label={businessType.startDateLabel} styles={styles} value={customer.moveInDate || '-'} />
-        <Detail label={businessType.endDateLabel} styles={styles} value={customer.moveOutDate || '-'} />
+        <Detail label={t(businessType.feeLabel)} styles={styles} value={money(customer.rent)} />
+        <Detail action={callCustomer} label={t('Phone')} styles={styles} value={customer.phone || '-'} />
+        <Detail label={t(businessType.startDateLabel)} styles={styles} value={customer.moveInDate || '-'} />
+        <Detail label={t(businessType.endDateLabel)} styles={styles} value={customer.moveOutDate || '-'} />
       </View>
 
       {services.length ? (
@@ -65,33 +67,33 @@ export function CustomerCard({ customer, deleting = false, expanded, onDelete, o
 
       {customer.idProof ? (
         <Pressable disabled={!onViewIdProof} onPress={onViewIdProof}>
-          <Text style={styles.proofText}>ID proof attached{customer.idProofName ? ` - ${customer.idProofName}` : ''}</Text>
+          <Text style={styles.proofText}>{t('ID proof attached')}{customer.idProofName ? ` - ${customer.idProofName}` : ''}</Text>
         </Pressable>
       ) : null}
 
       <Pressable accessibilityRole="button" onPress={onToggle} style={styles.toggleButton}>
-        <Text style={styles.toggleButtonText}>{expanded ? 'Hide details' : 'View details'}</Text>
+        <Text style={styles.toggleButtonText}>{t(expanded ? 'Hide details' : 'View details')}</Text>
       </Pressable>
 
       {expanded ? (
         <View style={styles.expandedPanel}>
-          <Text style={styles.expandedTitle}>{snapshotTitle}</Text>
+          <Text style={styles.expandedTitle}>{t(snapshotTitle)}</Text>
           <Text style={styles.expandedText}>
-            {services.length ? `${services.join(', ')} included.` : 'No services added yet.'}
+            {services.length ? `${services.join(', ')} ${t('included.')}` : t('No services added yet.')}
           </Text>
           <View style={styles.expandedActions}>
             <Pressable accessibilityRole="button" disabled={!customer.phone} onPress={callCustomer} style={styles.expandedAction}>
-              <Text style={styles.expandedActionText}>Call</Text>
+              <Text style={styles.expandedActionText}>{t('Call')}</Text>
             </Pressable>
             {onEdit ? (
               <Pressable accessibilityRole="button" onPress={onEdit} style={styles.expandedAction}>
-                <Text style={styles.expandedActionText}>Edit</Text>
+                <Text style={styles.expandedActionText}>{t('Edit')}</Text>
               </Pressable>
             ) : null}
           </View>
           {onDelete ? (
             <Pressable accessibilityRole="button" disabled={deleting} onPress={onDelete} style={[styles.deleteAction, deleting && styles.disabledAction]}>
-              <Text style={styles.deleteActionText}>{deleting ? 'Deleting...' : 'Delete customer'}</Text>
+              <Text style={styles.deleteActionText}>{t(deleting ? 'Deleting...' : 'Delete customer')}</Text>
             </Pressable>
           ) : null}
         </View>

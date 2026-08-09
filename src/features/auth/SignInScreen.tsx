@@ -4,6 +4,7 @@ import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-na
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { PrimaryButton } from '../../shared/components/PrimaryButton';
 import { TextField } from '../../shared/components/TextField';
+import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
 type SignInScreenProps = {
   error: string;
@@ -15,6 +16,7 @@ export function SignInScreen({ error, loading, onSignIn }: SignInScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
 
   return (
@@ -23,8 +25,8 @@ export function SignInScreen({ error, loading, onSignIn }: SignInScreenProps) {
         <View style={styles.mark}>
           <Text style={styles.markText}>K</Text>
         </View>
-        <Text style={styles.title}>Welcome back</Text>
-        <Text style={styles.subtitle}>Sign in to manage rooms, payments, and daily work.</Text>
+        <Text style={styles.title}>{t('Welcome back')}</Text>
+        <Text style={styles.subtitle}>{t('Sign in to manage rooms, payments, and daily work.')}</Text>
 
         <View style={styles.form}>
           <TextField
@@ -44,7 +46,7 @@ export function SignInScreen({ error, loading, onSignIn }: SignInScreenProps) {
             textContentType="password"
             value={password}
           />
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+          {error ? <Text style={styles.error}>{t(error)}</Text> : null}
           <PrimaryButton label="Continue" loading={loading} onPress={() => onSignIn(email, password)} />
         </View>
       </View>

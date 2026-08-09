@@ -18,12 +18,14 @@ import {
   summarizeDues,
 } from './operationsMath';
 import { MetricTile } from './MetricTile';
+import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
 type DashboardPeriod = 'Today' | 'Month' | 'All';
 const dashboardPeriods: DashboardPeriod[] = ['Today', 'Month', 'All'];
 
 export function OperationsOverviewScreen() {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
   const [period, setPeriod] = useState<DashboardPeriod>('Month');
   const [selectedMonth, setSelectedMonth] = useState(getMonthKey());
@@ -89,22 +91,22 @@ export function OperationsOverviewScreen() {
   const quickActions = [
     {
       id: 'dues',
-      label: 'Collect dues',
-      meta: `${duesSummary.pendingCount + duesSummary.partialCount} follow-ups`,
+      label: t('Collect dues'),
+      meta: `${duesSummary.pendingCount + duesSummary.partialCount} ${t('follow-ups')}`,
       value: money(duesSummary.balance),
       tone: colors.danger,
     },
     {
       id: 'enquiries',
-      label: 'Review leads',
-      meta: 'New enquiries',
+      label: t('Review leads'),
+      meta: t('New enquiries'),
       value: periodEnquiries.length,
       tone: colors.accent,
     },
     {
       id: 'meter',
-      label: 'Meter readings',
-      meta: 'Rooms updated',
+      label: t('Meter readings'),
+      meta: t('Rooms updated'),
       value: periodMeterReadings.length,
       tone: colors.warning,
     },
@@ -119,7 +121,7 @@ export function OperationsOverviewScreen() {
           <View style={styles.periodSwitch}>
             {dashboardPeriods.map((item) => (
               <Pressable key={item} onPress={() => setPeriod(item)} style={[styles.periodItem, period === item && styles.periodItemActive]}>
-                <Text style={[styles.periodText, period === item && styles.periodTextActive]}>{item}</Text>
+                <Text style={[styles.periodText, period === item && styles.periodTextActive]}>{t(item)}</Text>
               </Pressable>
             ))}
           </View>
@@ -127,51 +129,51 @@ export function OperationsOverviewScreen() {
         {period === 'Month' ? (
           <View style={styles.monthNavigator}>
             <Pressable accessibilityRole="button" onPress={() => setSelectedMonth((month) => shiftMonth(month, -1))} style={styles.monthButton}>
-              <Text style={styles.monthButtonText}>Prev</Text>
+              <Text style={styles.monthButtonText}>{t('Prev')}</Text>
             </Pressable>
             <Pressable accessibilityRole="button" onPress={() => setSelectedMonth(currentMonth)} style={styles.monthValue}>
               <Text style={styles.monthValueText}>{getMonthDisplay(reportMonth)}</Text>
-              <Text style={styles.monthValueHint}>{reportMonth === currentMonth ? 'Current month' : 'Tap to reset'}</Text>
+              <Text style={styles.monthValueHint}>{reportMonth === currentMonth ? t('Current month') : t('Tap to reset')}</Text>
             </Pressable>
             <Pressable accessibilityRole="button" onPress={() => setSelectedMonth((month) => shiftMonth(month, 1))} style={styles.monthButton}>
-              <Text style={styles.monthButtonText}>Next</Text>
+              <Text style={styles.monthButtonText}>{t('Next')}</Text>
             </Pressable>
           </View>
         ) : null}
-        <Text style={styles.netLabel}>Balance today</Text>
+        <Text style={styles.netLabel}>{t('Balance today')}</Text>
         <Text style={styles.netValue}>{money(net)}</Text>
-        <Text style={styles.title}>Today at a glance</Text>
+        <Text style={styles.title}>{t('Today at a glance')}</Text>
         <Text style={styles.subtitle}>
-          {period === 'Today'
+          {t(period === 'Today'
             ? 'Payments, expenses, and follow-ups added today.'
             : period === 'Month'
               ? 'Collections, dues, expenses, and follow-ups for this month.'
-              : 'All payments, expenses, and follow-ups so far.'}
+              : 'All payments, expenses, and follow-ups so far.')}
         </Text>
       </View>
 
       {loading ? (
         <View style={styles.statusRow}>
           <ActivityIndicator color={colors.brand} />
-          <Text style={styles.statusText}>Loading latest details</Text>
+          <Text style={styles.statusText}>{t('Loading latest details')}</Text>
         </View>
       ) : null}
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
       <View style={styles.metrics}>
-        <MetricTile label="Customers" value={tenants.data.length} tone="brand" />
-        <MetricTile label="Expected" value={money(duesSummary.expected)} tone="blue" />
-        <MetricTile label="Collected" value={money(collected)} tone="green" />
-        <MetricTile label="Due" value={money(duesSummary.balance)} tone={duesSummary.balance > 0 ? 'red' : 'green'} />
-        <MetricTile label="Expenses" value={money(expensesTotal)} tone="orange" />
-        <MetricTile label="Net" value={money(net)} tone={net >= 0 ? 'green' : 'red'} />
+        <MetricTile label={t('Customers')} value={tenants.data.length} tone="brand" />
+        <MetricTile label={t('Expected')} value={money(duesSummary.expected)} tone="blue" />
+        <MetricTile label={t('Collected')} value={money(collected)} tone="green" />
+        <MetricTile label={t('Due')} value={money(duesSummary.balance)} tone={duesSummary.balance > 0 ? 'red' : 'green'} />
+        <MetricTile label={t('Expenses')} value={money(expensesTotal)} tone="orange" />
+        <MetricTile label={t('Net')} value={money(net)} tone={net >= 0 ? 'green' : 'red'} />
       </View>
 
       <View style={styles.actionSection}>
         <View style={styles.sectionTitleRow}>
-          <Text style={styles.panelTitle}>Next actions</Text>
-          <Text style={styles.sectionHint}>Tap to view</Text>
+          <Text style={styles.panelTitle}>{t('Next actions')}</Text>
+          <Text style={styles.sectionHint}>{t('Tap to view')}</Text>
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionRail}>
           {quickActions.map((action) => {
@@ -196,17 +198,17 @@ export function OperationsOverviewScreen() {
           <Text style={styles.activeActionTitle}>{activeAction.label}</Text>
           <Text style={styles.activeActionValue}>{activeAction.value}</Text>
           <Text style={styles.activeActionText}>
-            {activeAction.meta}. Choose another card to check a different area.
+            {activeAction.meta}. {t('Choose another card to check a different area.')}
           </Text>
         </View>
       </View>
 
       <View style={styles.focusPanel}>
-        <Text style={styles.panelTitle}>Needs attention</Text>
-        <FocusRow accent={colors.danger} label="Outstanding dues" styles={styles} value={`${duesSummary.pendingCount + duesSummary.partialCount} accounts`} />
-        <FocusRow accent={colors.accent} label={`${period} enquiries`} styles={styles} value={`${periodEnquiries.length} leads`} />
-        <FocusRow accent={colors.warning} label={`${period} meter readings`} styles={styles} value={`${periodMeterReadings.length} readings`} />
-        <FocusRow accent={colors.brand} label={`${period} notices`} styles={styles} value={`${periodNotices.length} notices`} />
+        <Text style={styles.panelTitle}>{t('Needs attention')}</Text>
+        <FocusRow accent={colors.danger} label={t('Outstanding dues')} styles={styles} value={`${duesSummary.pendingCount + duesSummary.partialCount} ${t('customers')}`} />
+        <FocusRow accent={colors.accent} label={`${t(period)} ${t('enquiries')}`} styles={styles} value={`${periodEnquiries.length} ${t('leads')}`} />
+        <FocusRow accent={colors.warning} label={`${t(period)} ${t('meter readings')}`} styles={styles} value={`${periodMeterReadings.length} ${t('readings')}`} />
+        <FocusRow accent={colors.brand} label={`${t(period)} ${t('notices')}`} styles={styles} value={`${periodNotices.length} ${t('notices')}`} />
       </View>
     </View>
   );

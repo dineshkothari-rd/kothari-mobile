@@ -1,20 +1,24 @@
 import { StyleSheet, Text, TextInput, type TextInputProps, View } from 'react-native';
 
 import { radius, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
+import { useLanguage } from '../i18n/LanguageProvider';
 
 type TextFieldProps = TextInputProps & {
   label: string;
 };
 
-export function TextField({ label, style, ...props }: TextFieldProps) {
+export function TextField({ label, placeholder: rawPlaceholder, style, ...props }: TextFieldProps) {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
+  const placeholder = typeof rawPlaceholder === 'string' ? t(rawPlaceholder) : rawPlaceholder;
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.label}>{label}</Text>
+      <Text style={styles.label}>{t(label)}</Text>
       <TextInput
         autoCapitalize="none"
+        placeholder={placeholder}
         placeholderTextColor={colors.muted}
         style={[styles.input, style]}
         {...props}

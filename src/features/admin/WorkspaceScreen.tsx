@@ -11,6 +11,7 @@ import { OperationsOverviewScreen } from '../operations/OperationsOverviewScreen
 import type { AdminProfile } from '../../shared/types/admin';
 import { AppBadge } from '../../shared/components/AppBadge';
 import { ModuleCard } from '../../shared/components/ModuleCard';
+import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
 const primaryTabs = [
   { id: 'overview', label: 'Home', mark: 'H' },
@@ -27,6 +28,7 @@ type WorkspaceScreenProps = {
 export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
   const insets = useSafeAreaInsets();
   const activeModules = useMemo(() => {
@@ -44,11 +46,11 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
           </View>
           <View style={styles.headerCopy}>
             <Text style={styles.eyebrow}>Kothari</Text>
-            <Text style={styles.title}>Hi, {admin.name}</Text>
+            <Text style={styles.title}>{t('Hi')}, {admin.name}</Text>
           </View>
         </View>
         <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.exitButton}>
-          <Text style={styles.exitText}>Exit</Text>
+          <Text style={styles.exitText}>{t('Exit')}</Text>
         </Pressable>
       </View>
 
@@ -65,11 +67,11 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
           <>
             <View style={styles.heroPanel}>
               <View style={styles.heroTop}>
-                <Text style={styles.heroTitle}>Almost ready</Text>
+                <Text style={styles.heroTitle}>{t('Almost ready')}</Text>
                 <AppBadge label="Soon" />
               </View>
               <Text style={styles.heroText}>
-                This section is being prepared for day-to-day use.
+                {t('This section is being prepared for day-to-day use.')}
               </Text>
             </View>
 
@@ -95,7 +97,7 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
                 style={[styles.navItem, active && styles.navItemActive]}
               >
                 <Text style={[styles.navMark, active && styles.navMarkActive]}>{tab.mark}</Text>
-                <Text style={[styles.navLabel, active && styles.navLabelActive]}>{tab.label}</Text>
+                <Text style={[styles.navLabel, active && styles.navLabelActive]}>{t(tab.label)}</Text>
               </Pressable>
             );
           })}

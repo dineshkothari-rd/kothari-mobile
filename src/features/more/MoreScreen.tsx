@@ -5,17 +5,21 @@ import { radius, spacing, typography, useAppTheme, type AppColors } from '../../
 import { EnquiriesScreen } from '../enquiries/EnquiriesScreen';
 import { MeterScreen } from '../meter/MeterScreen';
 import { NoticesScreen } from '../notices/NoticesScreen';
+import { SettingsScreen } from '../settings/SettingsScreen';
+import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
-type MoreView = 'enquiries' | 'notices' | 'meter';
+type MoreView = 'enquiries' | 'notices' | 'meter' | 'settings';
 
 const moreViews: Array<{ label: string; value: MoreView }> = [
   { label: 'Enquiries', value: 'enquiries' },
   { label: 'Notices', value: 'notices' },
   { label: 'Meter', value: 'meter' },
+  { label: 'Settings', value: 'settings' },
 ];
 
 export function MoreScreen() {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
   const [view, setView] = useState<MoreView>('enquiries');
 
@@ -27,13 +31,21 @@ export function MoreScreen() {
 
           return (
             <Pressable key={item.value} onPress={() => setView(item.value)} style={[styles.switchItem, active && styles.switchItemActive]}>
-              <Text style={[styles.switchText, active && styles.switchTextActive]}>{item.label}</Text>
+              <Text style={[styles.switchText, active && styles.switchTextActive]}>{t(item.label)}</Text>
             </Pressable>
           );
         })}
       </View>
 
-      {view === 'enquiries' ? <EnquiriesScreen /> : view === 'notices' ? <NoticesScreen /> : <MeterScreen />}
+      {view === 'enquiries' ? (
+        <EnquiriesScreen />
+      ) : view === 'notices' ? (
+        <NoticesScreen />
+      ) : view === 'meter' ? (
+        <MeterScreen />
+      ) : (
+        <SettingsScreen />
+      )}
     </View>
   );
 }

@@ -22,6 +22,7 @@ import { money, toNumber } from '../../shared/utils/money';
 import { FilterPill } from '../customers/FilterPill';
 import { getCustomerAllocationLabel, getCustomerStatus } from '../customers/customerUtils';
 import { getMonthKey } from '../operations/operationsMath';
+import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
 const RATE_PER_UNIT = 10;
 
@@ -69,6 +70,7 @@ function getBillTotal(readings: MeterReadingRecord[]) {
 
 export function MeterScreen() {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
   const [search, setSearch] = useState('');
   const [tenantFilter, setTenantFilter] = useState('');
@@ -108,7 +110,7 @@ export function MeterScreen() {
       });
       setShowForm(false);
     } catch (createError) {
-      setActionError(createError instanceof Error ? createError.message : 'Could not save meter reading.');
+      setActionError(createError instanceof Error ? createError.message : t('Could not save meter reading.'));
     } finally {
       setSaving(false);
     }
@@ -121,16 +123,16 @@ export function MeterScreen() {
     try {
       await deleteDoc(doc(db, 'meterReadings', readingId));
     } catch (deleteError) {
-      setActionError(deleteError instanceof Error ? deleteError.message : 'Could not delete meter reading.');
+      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete meter reading.'));
     } finally {
       setDeletingId('');
     }
   }
 
   function confirmDelete(reading: MeterReadingRecord) {
-    Alert.alert('Delete reading?', `Delete reading for ${reading.tenantName || 'this customer'}? This cannot be undone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteReading(reading.id) },
+    Alert.alert(t('Delete reading?'), `${t('Delete reading for')} ${reading.tenantName || t('this customer')}? ${t('This cannot be undone.')}`, [
+      { text: t('Cancel'), style: 'cancel' },
+      { text: t('Delete'), style: 'destructive', onPress: () => deleteReading(reading.id) },
     ]);
   }
 
@@ -143,9 +145,9 @@ export function MeterScreen() {
       <View style={styles.hero}>
         <View style={styles.heroTop}>
           <View>
-            <Text style={styles.kicker}>Electricity</Text>
-            <Text style={styles.title}>Meter readings</Text>
-            <Text style={styles.subtitle}>Add readings and calculate the bill for each room.</Text>
+            <Text style={styles.kicker}>{t('Electricity')}</Text>
+            <Text style={styles.title}>{t('Meter readings')}</Text>
+            <Text style={styles.subtitle}>{t('Add readings and calculate the bill for each room.')}</Text>
           </View>
           <Pressable
             onPress={() => {
@@ -154,21 +156,21 @@ export function MeterScreen() {
             }}
             style={styles.addButton}
           >
-            <Text style={styles.addButtonText}>Add reading</Text>
+            <Text style={styles.addButtonText}>{t('Add reading')}</Text>
           </Pressable>
         </View>
 
         <View style={styles.metrics}>
-          <Metric label="Readings" styles={styles} value={String(filtered.length)} />
-          <Metric label="Units" styles={styles} value={String(totalUnits)} />
-          <Metric label="Bill" styles={styles} value={money(totalBill)} />
+          <Metric label={t('Readings')} styles={styles} value={String(filtered.length)} />
+          <Metric label={t('Units')} styles={styles} value={String(totalUnits)} />
+          <Metric label={t('Bill')} styles={styles} value={money(totalBill)} />
         </View>
       </View>
 
       {loading ? (
         <View style={styles.statusRow}>
           <ActivityIndicator color={colors.brand} />
-          <Text style={styles.statusText}>Loading meter readings</Text>
+          <Text style={styles.statusText}>{t('Loading meter readings')}</Text>
         </View>
       ) : null}
 
@@ -191,10 +193,10 @@ export function MeterScreen() {
         ))
       ) : (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No readings found</Text>
-          <Text style={styles.emptyText}>Add a reading or change the filters.</Text>
+          <Text style={styles.emptyTitle}>{t('No readings found')}</Text>
+          <Text style={styles.emptyText}>{t('Add a reading or change the filters.')}</Text>
           <Pressable onPress={readings.data.length ? clearFilters : () => setShowForm(true)} style={styles.emptyAction}>
-            <Text style={styles.emptyActionText}>{readings.data.length ? 'Clear filters' : 'Add reading'}</Text>
+            <Text style={styles.emptyActionText}>{t(readings.data.length ? 'Clear filters' : 'Add reading')}</Text>
           </Pressable>
         </View>
       )}
@@ -215,6 +217,7 @@ function MeterFormSheet({
   styles: ReturnType<typeof createStyles>;
   tenants: TenantRecord[];
 }) {
+  const { t } = useLanguage();
   const [tenantId, setTenantId] = useState(tenants[0]?.id || '');
   const [month, setMonth] = useState(getMonthKey());
   const [currentReading, setCurrentReading] = useState('');
@@ -249,7 +252,7 @@ function MeterFormSheet({
       setPreviousReading(snap.empty ? 0 : toNumber(snap.docs[0].data().currentReading));
     } catch (readError) {
       setPreviousReading(0);
-      setFormError(readError instanceof Error ? readError.message : 'Could not load previous reading.');
+      setFormError(readError instanceof Error ? readError.message : t('Could not load previous reading.'));
     } finally {
       setLoadingPrevious(false);
     }
@@ -257,17 +260,17 @@ function MeterFormSheet({
 
   function submit() {
     if (!selectedTenant) {
-      setFormError('Select a customer first.');
+      setFormError(t('Select a customer first.'));
       return;
     }
 
     if (!month.trim() || !currentReading) {
-      setFormError('Month and current reading are required.');
+      setFormError(t('Month and current reading are required.'));
       return;
     }
 
     if (previousReading !== null && current < previous) {
-      setFormError(`Current reading cannot be less than previous reading (${previous}).`);
+      setFormError(`${t('Current reading cannot be less than previous reading')} (${previous}).`);
       return;
     }
 
@@ -293,17 +296,17 @@ function MeterFormSheet({
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <View>
-                <Text style={styles.sheetKicker}>Electricity</Text>
-                <Text style={styles.sheetTitle}>Add reading</Text>
+                <Text style={styles.sheetKicker}>{t('Electricity')}</Text>
+                <Text style={styles.sheetTitle}>{t('Add reading')}</Text>
               </View>
               <Pressable disabled={saving} onPress={onClose} style={styles.sheetCloseButton}>
-                <Text style={styles.sheetCloseText}>Close</Text>
+                <Text style={styles.sheetCloseText}>{t('Close')}</Text>
               </Pressable>
             </View>
 
             {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
 
-            <Text style={styles.formLabel}>Customer</Text>
+            <Text style={styles.formLabel}>{t('Customer')}</Text>
             {tenants.length ? (
               <ScrollView nestedScrollEnabled showsVerticalScrollIndicator={false} style={styles.tenantPicker} contentContainerStyle={styles.tenantPickerContent}>
                 {tenants.slice(0, 80).map((tenant) => (
@@ -316,7 +319,7 @@ function MeterFormSheet({
                 ))}
               </ScrollView>
             ) : (
-              <Text style={styles.helpText}>No rooms available for meter readings.</Text>
+              <Text style={styles.helpText}>{t('No rooms available for meter readings.')}</Text>
             )}
 
             <View style={styles.formGrid}>
@@ -325,20 +328,20 @@ function MeterFormSheet({
             </View>
 
             <View style={styles.readingSummary}>
-              <MeterMini label="Previous" styles={styles} value={loadingPrevious ? 'Loading' : String(previous)} />
-              <MeterMini label="Current" styles={styles} value={String(current)} />
-              <MeterMini label="Units" styles={styles} value={String(unitsConsumed)} />
-              <MeterMini label="Bill" styles={styles} value={money(billAmount)} />
+              <MeterMini label={t('Previous')} styles={styles} value={loadingPrevious ? t('Loading') : String(previous)} />
+              <MeterMini label={t('Current')} styles={styles} value={String(current)} />
+              <MeterMini label={t('Units')} styles={styles} value={String(unitsConsumed)} />
+              <MeterMini label={t('Bill')} styles={styles} value={money(billAmount)} />
             </View>
 
             <TextField label="Note" onChangeText={setNote} placeholder="Optional note" value={note} />
 
             <View style={styles.sheetActions}>
               <Pressable disabled={saving} onPress={onClose} style={[styles.sheetSecondaryAction, saving && styles.disabled]}>
-                <Text style={styles.sheetSecondaryText}>Cancel</Text>
+                <Text style={styles.sheetSecondaryText}>{t('Cancel')}</Text>
               </Pressable>
               <Pressable disabled={saving} onPress={submit} style={[styles.sheetPrimaryAction, saving && styles.disabled]}>
-                {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.sheetPrimaryText}>Save reading</Text>}
+                {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.sheetPrimaryText}>{t('Save reading')}</Text>}
               </Pressable>
             </View>
           </ScrollView>
@@ -359,13 +362,14 @@ function MeterCard({
   reading: MeterReadingRecord;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const { t } = useLanguage();
   return (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={styles.cardCopy}>
-          <Text style={styles.cardTitle}>{reading.tenantName || 'Meter reading'}</Text>
+          <Text style={styles.cardTitle}>{reading.tenantName || t('Meter reading')}</Text>
           <Text style={styles.cardMeta}>
-            {reading.month || 'No month'}
+            {reading.month || t('No month')}
             {reading.tenantRoom ? ` / ${reading.tenantRoom}` : ''}
           </Text>
         </View>
@@ -373,17 +377,17 @@ function MeterCard({
       </View>
 
       <View style={styles.grid}>
-        <MeterMini label="Previous" styles={styles} value={String(toNumber(reading.previousReading))} />
-        <MeterMini label="Current" styles={styles} value={String(toNumber(reading.currentReading))} />
+        <MeterMini label={t('Previous')} styles={styles} value={String(toNumber(reading.previousReading))} />
+        <MeterMini label={t('Current')} styles={styles} value={String(toNumber(reading.currentReading))} />
       </View>
       <View style={styles.grid}>
-        <MeterMini label="Units" styles={styles} value={String(toNumber(reading.unitsConsumed))} />
-        <MeterMini label="Rate" styles={styles} value={money(reading.ratePerUnit)} />
+        <MeterMini label={t('Units')} styles={styles} value={String(toNumber(reading.unitsConsumed))} />
+        <MeterMini label={t('Rate')} styles={styles} value={money(reading.ratePerUnit)} />
       </View>
 
       {reading.note ? <Text style={styles.note}>{String(reading.note)}</Text> : null}
       <Pressable disabled={deleting} onPress={onDelete} style={[styles.deleteButton, deleting && styles.disabled]}>
-        <Text style={styles.deleteText}>{deleting ? 'Deleting...' : 'Delete reading'}</Text>
+        <Text style={styles.deleteText}>{t(deleting ? 'Deleting...' : 'Delete reading')}</Text>
       </Pressable>
     </View>
   );

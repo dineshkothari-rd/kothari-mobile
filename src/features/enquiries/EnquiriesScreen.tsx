@@ -10,6 +10,7 @@ import type { EnquiryRecord } from '../../shared/types/records';
 import { businessTypeOptions, getBusinessType } from '../customers/businessTypes';
 import { FilterPill } from '../customers/FilterPill';
 import { editableEnquiryStatuses, enquiryStatuses } from './enquiryStatuses';
+import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
 function getStatus(enquiry: EnquiryRecord) {
   return enquiry.status || 'New';
@@ -75,6 +76,7 @@ function openLink(url: string) {
 
 export function EnquiriesScreen() {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -106,7 +108,7 @@ export function EnquiriesScreen() {
         updatedAt: serverTimestamp(),
       });
     } catch (statusError) {
-      setActionError(statusError instanceof Error ? statusError.message : 'Could not update enquiry status.');
+      setActionError(statusError instanceof Error ? statusError.message : t('Could not update enquiry status.'));
     } finally {
       setBusyId('');
     }
@@ -119,7 +121,7 @@ export function EnquiriesScreen() {
     try {
       await deleteDoc(doc(db, 'enquiries', enquiryId));
     } catch (deleteError) {
-      setActionError(deleteError instanceof Error ? deleteError.message : 'Could not delete enquiry.');
+      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete enquiry.'));
     } finally {
       setBusyId('');
     }
@@ -146,7 +148,7 @@ export function EnquiriesScreen() {
         moveInTime: '12:00',
         moveOutDate: '',
         moveOutTime: '11:00',
-        name: enquiry.name || 'Unnamed enquiry',
+        name: enquiry.name || t('Unnamed enquiry'),
         phone: enquiry.phone || '',
         rent: 0,
         room: '',
@@ -162,16 +164,16 @@ export function EnquiriesScreen() {
         updatedAt: serverTimestamp(),
       });
     } catch (convertError) {
-      setActionError(convertError instanceof Error ? convertError.message : 'Could not convert enquiry.');
+      setActionError(convertError instanceof Error ? convertError.message : t('Could not convert enquiry.'));
     } finally {
       setConvertingId('');
     }
   }
 
   function confirmDelete(enquiry: EnquiryRecord) {
-    Alert.alert('Delete enquiry?', `Delete enquiry from ${enquiry.name || 'this person'}? This cannot be undone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteEnquiry(enquiry.id) },
+    Alert.alert(t('Delete enquiry?'), `${t('Delete enquiry from')} ${enquiry.name || t('this person')}? ${t('This cannot be undone.')}`, [
+      { text: t('Cancel'), style: 'cancel' },
+      { text: t('Delete'), style: 'destructive', onPress: () => deleteEnquiry(enquiry.id) },
     ]);
   }
 
@@ -179,21 +181,21 @@ export function EnquiriesScreen() {
     <View>
       <View style={styles.hero}>
         <View>
-          <Text style={styles.kicker}>New enquiries</Text>
-          <Text style={styles.title}>Enquiries</Text>
-          <Text style={styles.subtitle}>Call, message, and turn interested people into customers.</Text>
+          <Text style={styles.kicker}>{t('New enquiries')}</Text>
+          <Text style={styles.title}>{t('Enquiries')}</Text>
+          <Text style={styles.subtitle}>{t('Call, message, and turn interested people into customers.')}</Text>
         </View>
         <View style={styles.metrics}>
-          <Metric label="Total" styles={styles} value={String(enquiries.data.length)} />
-          <Metric label="New" styles={styles} value={String(countByStatus(enquiries.data, 'New'))} />
-          <Metric label="Converted" styles={styles} value={String(countByStatus(enquiries.data, 'Converted'))} />
+          <Metric label={t('Total')} styles={styles} value={String(enquiries.data.length)} />
+          <Metric label={t('New')} styles={styles} value={String(countByStatus(enquiries.data, 'New'))} />
+          <Metric label={t('Converted')} styles={styles} value={String(countByStatus(enquiries.data, 'Converted'))} />
         </View>
       </View>
 
       {enquiries.loading ? (
         <View style={styles.statusRow}>
           <ActivityIndicator color={colors.brand} />
-          <Text style={styles.statusText}>Loading enquiries</Text>
+          <Text style={styles.statusText}>{t('Loading enquiries')}</Text>
         </View>
       ) : null}
 
@@ -215,9 +217,9 @@ export function EnquiriesScreen() {
       </View>
 
       <View style={styles.summaryCard}>
-        <Text style={styles.summaryLabel}>Showing</Text>
+        <Text style={styles.summaryLabel}>{t('Showing')}</Text>
         <Text style={styles.summaryValue}>{filtered.length}</Text>
-        <Text style={styles.summaryMeta}>{statusFilter || search ? 'Filtered enquiries' : 'All enquiries'}</Text>
+        <Text style={styles.summaryMeta}>{t(statusFilter || search ? 'Filtered enquiries' : 'All enquiries')}</Text>
       </View>
 
       {filtered.length ? (
@@ -235,11 +237,11 @@ export function EnquiriesScreen() {
         ))
       ) : (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No enquiries found</Text>
-          <Text style={styles.emptyText}>Try changing the search or filters.</Text>
+          <Text style={styles.emptyTitle}>{t('No enquiries found')}</Text>
+          <Text style={styles.emptyText}>{t('Try changing the search or filters.')}</Text>
           {search || statusFilter ? (
             <Pressable onPress={clearFilters} style={styles.emptyAction}>
-              <Text style={styles.emptyActionText}>Clear filters</Text>
+              <Text style={styles.emptyActionText}>{t('Clear filters')}</Text>
             </Pressable>
           ) : null}
         </View>
@@ -265,6 +267,7 @@ function EnquiryCard({
   onStatusChange: (status: string) => void;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const { t } = useLanguage();
   const status = getStatus(enquiry);
   const phone = cleanPhone(enquiry.phone);
   const inferredType = getBusinessType(inferBusinessType(enquiry));
@@ -277,24 +280,24 @@ function EnquiryCard({
     <View style={styles.card}>
       <View style={styles.cardHeader}>
         <View style={styles.cardCopy}>
-          <Text style={styles.name}>{enquiry.name || 'Unnamed enquiry'}</Text>
+          <Text style={styles.name}>{enquiry.name || t('Unnamed enquiry')}</Text>
           <Text style={styles.date}>{formatDate(enquiry.createdAt)}</Text>
         </View>
         <View style={styles.badge}>
-          <Text style={styles.badgeText}>{status}</Text>
+          <Text style={styles.badgeText}>{t(status)}</Text>
         </View>
       </View>
 
       <View style={styles.infoGrid}>
-        <InfoBox label="Phone" styles={styles} value={enquiry.phone || '-'} />
-        <InfoBox label="For" styles={styles} value={inferredType.label} />
-        <InfoBox label="Requirement" styles={styles} value={enquiry.roomType || 'Not selected'} />
+        <InfoBox label={t('Phone')} styles={styles} value={enquiry.phone || '-'} />
+        <InfoBox label={t('For')} styles={styles} value={t(inferredType.label)} />
+        <InfoBox label={t('Requirement')} styles={styles} value={enquiry.roomType || t('Not selected')} />
       </View>
 
       {enquiry.email ? <Text style={styles.email}>{enquiry.email}</Text> : null}
       {enquiry.message ? <Text style={styles.message}>{enquiry.message}</Text> : null}
 
-      <Text style={styles.sectionLabel}>Status</Text>
+      <Text style={styles.sectionLabel}>{t('Status')}</Text>
       <View style={styles.statusRail}>
         {editableEnquiryStatuses.map((option) => {
           const active = status === option.value;
@@ -306,7 +309,7 @@ function EnquiryCard({
               onPress={() => onStatusChange(option.value)}
               style={[styles.statusChip, active && styles.statusChipActive, busy && styles.disabled]}
             >
-              <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>{option.label}</Text>
+              <Text style={[styles.statusChipText, active && styles.statusChipTextActive]}>{t(option.label)}</Text>
             </Pressable>
           );
         })}
@@ -314,29 +317,29 @@ function EnquiryCard({
 
       <View style={styles.actions}>
         <Pressable disabled={!phone} onPress={() => openLink(`tel:${phone}`)} style={[styles.actionButton, !phone && styles.disabled]}>
-          <Text style={styles.actionText}>Call</Text>
+          <Text style={styles.actionText}>{t('Call')}</Text>
         </Pressable>
         <Pressable
           disabled={!enquiry.email}
           onPress={() => openLink(`mailto:${enquiry.email}`)}
           style={[styles.actionButton, styles.actionButtonSurface, !enquiry.email && styles.disabled]}
         >
-          <Text style={styles.actionTextAlt}>Email</Text>
+          <Text style={styles.actionTextAlt}>{t('Email')}</Text>
         </Pressable>
       </View>
 
       <View style={styles.actions}>
         <Pressable disabled={!phone} onPress={() => openLink(`https://wa.me/${phone}?text=${whatsappMessage}`)} style={[styles.actionButton, styles.actionButtonAccent, !phone && styles.disabled]}>
-          <Text style={styles.actionText}>WhatsApp</Text>
+          <Text style={styles.actionText}>{t('WhatsApp')}</Text>
         </Pressable>
         <Pressable disabled={busy || converting || converted} onPress={onConvert} style={[styles.actionButton, styles.actionButtonSurface, (busy || converting || converted) && styles.disabled]}>
-          <Text style={styles.actionTextAlt}>{converted ? 'Converted' : converting ? 'Converting...' : 'Convert'}</Text>
+          <Text style={styles.actionTextAlt}>{t(converted ? 'Converted' : converting ? 'Converting...' : 'Convert')}</Text>
         </Pressable>
       </View>
 
       <View style={styles.actions}>
         <Pressable disabled={busy} onPress={onDelete} style={[styles.actionButton, styles.deleteButton, busy && styles.disabled]}>
-          <Text style={styles.deleteText}>{busy ? 'Saving...' : 'Delete'}</Text>
+          <Text style={styles.deleteText}>{t(busy ? 'Saving...' : 'Delete')}</Text>
         </Pressable>
       </View>
     </View>

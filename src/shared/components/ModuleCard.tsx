@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { AppBadge } from './AppBadge';
 import type { FeatureModule } from '../../features/featureModules';
+import { useLanguage } from '../i18n/LanguageProvider';
 
 const statusLabel = {
   ready: 'Ready',
@@ -12,15 +13,16 @@ const statusLabel = {
 
 export function ModuleCard({ feature }: { feature: FeatureModule }) {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
 
   return (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
-        <Text style={styles.title}>{feature.title}</Text>
+        <Text style={styles.title}>{t(feature.title)}</Text>
         <AppBadge label={statusLabel[feature.status]} tone={feature.status === 'ready' ? 'success' : 'neutral'} />
       </View>
-      <Text style={styles.description}>{feature.description}</Text>
+      <Text style={styles.description}>{t(feature.description)}</Text>
     </View>
   );
 }

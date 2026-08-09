@@ -35,6 +35,7 @@ import { db } from '../../lib/firebase/client';
 import type { DueRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
 import { money, toNumber } from '../../shared/utils/money';
 import { ExpenseDesk } from './ExpenseDesk';
+import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
 type MoneyView = 'dues' | 'collections' | 'expenses';
 type DueStatusFilter = 'due' | 'partial' | 'pending' | 'paid' | 'all';
@@ -186,6 +187,7 @@ function openWhatsApp(due: DueRecord) {
 
 export function MoneyScreen() {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
   const [view, setView] = useState<MoneyView>('dues');
   const [month, setMonth] = useState(getMonthKey());
@@ -252,7 +254,7 @@ export function MoneyScreen() {
       setView('collections');
       setPaymentFilter('all');
     } catch (createError) {
-      setActionError(createError instanceof Error ? createError.message : 'Could not record payment.');
+      setActionError(createError instanceof Error ? createError.message : t('Could not record payment.'));
     } finally {
       setSavingPayment(false);
     }
@@ -265,7 +267,7 @@ export function MoneyScreen() {
     try {
       await deleteDoc(doc(db, 'payments', paymentId));
     } catch (deleteError) {
-      setActionError(deleteError instanceof Error ? deleteError.message : 'Could not delete payment.');
+      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete payment.'));
     } finally {
       setDeletingPaymentId('');
     }
@@ -273,12 +275,12 @@ export function MoneyScreen() {
 
   function confirmDeletePayment(payment: PaymentRecord) {
     Alert.alert(
-      'Delete payment?',
-      `Delete payment for ${getPaymentTenantName(payment, tenants.data)}? This cannot be undone.`,
+      t('Delete payment?'),
+      `${t('Delete payment for')} ${getPaymentTenantName(payment, tenants.data)}? ${t('This cannot be undone.')}`,
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: t('Cancel'), style: 'cancel' },
         {
-          text: 'Delete',
+          text: t('Delete'),
           style: 'destructive',
           onPress: () => deletePayment(payment.id),
         },
@@ -305,7 +307,7 @@ export function MoneyScreen() {
         <View style={styles.heroTop}>
           <View>
             <Text style={styles.kicker}>{getMonthDisplay(month)}</Text>
-            <Text style={styles.title}>Money</Text>
+            <Text style={styles.title}>{t('Money')}</Text>
           </View>
           <View style={styles.viewSwitch}>
             {(['dues', 'collections', 'expenses'] as MoneyView[]).map((item) => {
@@ -314,7 +316,7 @@ export function MoneyScreen() {
               return (
                 <Pressable key={item} onPress={() => setView(item)} style={[styles.switchItem, active && styles.switchItemActive]}>
                   <Text style={[styles.switchText, active && styles.switchTextActive]}>
-                    {item === 'dues' ? 'Dues' : item === 'collections' ? 'Collections' : 'Expenses'}
+                    {t(item === 'dues' ? 'Dues' : item === 'collections' ? 'Collections' : 'Expenses')}
                   </Text>
                 </Pressable>
               );
@@ -324,21 +326,21 @@ export function MoneyScreen() {
 
         <View style={styles.monthNavigator}>
           <Pressable accessibilityRole="button" onPress={() => setMonth((value) => shiftMonth(value, -1))} style={styles.monthButton}>
-            <Text style={styles.monthButtonText}>Prev</Text>
+            <Text style={styles.monthButtonText}>{t('Prev')}</Text>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={() => setMonth(currentMonth)} style={styles.monthValue}>
             <Text style={styles.monthValueText}>{month}</Text>
-            <Text style={styles.monthValueHint}>{month === currentMonth ? 'Current month' : 'Tap to reset'}</Text>
+            <Text style={styles.monthValueHint}>{month === currentMonth ? t('Current month') : t('Tap to reset')}</Text>
           </Pressable>
           <Pressable accessibilityRole="button" onPress={() => setMonth((value) => shiftMonth(value, 1))} style={styles.monthButton}>
-            <Text style={styles.monthButtonText}>Next</Text>
+            <Text style={styles.monthButtonText}>{t('Next')}</Text>
           </Pressable>
         </View>
 
         <View style={styles.heroMetrics}>
-          <HeroMetric label="Expected" styles={styles} value={money(duesSummary.expected)} />
-          <HeroMetric label="Collected" styles={styles} value={money(duesSummary.collected)} />
-          <HeroMetric label="Due" danger styles={styles} value={money(duesSummary.balance)} />
+          <HeroMetric label={t('Expected')} styles={styles} value={money(duesSummary.expected)} />
+          <HeroMetric label={t('Collected')} styles={styles} value={money(duesSummary.collected)} />
+          <HeroMetric label={t('Due')} danger styles={styles} value={money(duesSummary.balance)} />
         </View>
 
         {view === 'expenses' ? null : (
@@ -347,7 +349,7 @@ export function MoneyScreen() {
             onPress={() => openPaymentForm()}
             style={styles.recordPaymentButton}
           >
-            <Text style={styles.recordPaymentText}>Record payment</Text>
+            <Text style={styles.recordPaymentText}>{t('Record payment')}</Text>
           </Pressable>
         )}
       </View>
@@ -355,7 +357,7 @@ export function MoneyScreen() {
       {loading ? (
         <View style={styles.statusRow}>
           <ActivityIndicator color={colors.brand} />
-          <Text style={styles.statusText}>Loading money details</Text>
+          <Text style={styles.statusText}>{t('Loading money details')}</Text>
         </View>
       ) : null}
 
@@ -394,18 +396,18 @@ export function MoneyScreen() {
         <ExpenseDesk month={month} />
       ) : view === 'dues' ? (
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Due balance</Text>
+          <Text style={styles.summaryLabel}>{t('Due balance')}</Text>
           <Text style={styles.summaryValue}>{money(visibleDuesSummary.balance)}</Text>
           <Text style={styles.summaryMeta}>
-            {visibleDues.length} customers, {visibleDuesSummary.partialCount} partial, {visibleDuesSummary.pendingCount} pending
+            {visibleDues.length} {t('customers')}, {visibleDuesSummary.partialCount} {t('partial')}, {visibleDuesSummary.pendingCount} {t('pending')}
           </Text>
         </View>
       ) : (
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Collections</Text>
+          <Text style={styles.summaryLabel}>{t('Collections')}</Text>
           <Text style={styles.summaryValue}>{money(collected)}</Text>
           <Text style={styles.summaryMeta}>
-            {visiblePayments.length} payments in {getMonthDisplay(month)}, {money(balance)} still due
+            {visiblePayments.length} {t('payments in')} {getMonthDisplay(month)}, {money(balance)} {t('still due')}
           </Text>
         </View>
       )}
@@ -459,6 +461,7 @@ function PaymentFormSheet({
   styles: ReturnType<typeof createStyles>;
   tenants: TenantRecord[];
 }) {
+  const { t } = useLanguage();
   const [tenantId, setTenantId] = useState(initialTenantId);
   const [paymentMonth, setPaymentMonth] = useState(month);
   const [amountPaid, setAmountPaid] = useState(initialAmount > 0 ? String(initialAmount) : '');
@@ -482,22 +485,22 @@ function PaymentFormSheet({
 
   function submit() {
     if (!tenants.length) {
-      setFormError('Add a customer before recording payments.');
+      setFormError(t('Add a customer before recording payments.'));
       return;
     }
 
     if (!selectedTenant) {
-      setFormError('Select a customer first.');
+      setFormError(t('Select a customer first.'));
       return;
     }
 
     if (!paymentMonth.trim()) {
-      setFormError('Enter payment month.');
+      setFormError(t('Enter payment month.'));
       return;
     }
 
     if (!paid || paid <= 0) {
-      setFormError('Enter a valid amount paid.');
+      setFormError(t('Enter a valid amount paid.'));
       return;
     }
 
@@ -524,17 +527,17 @@ function PaymentFormSheet({
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <View>
-                <Text style={styles.sheetKicker}>New collection</Text>
-                <Text style={styles.sheetTitle}>Record payment</Text>
+                <Text style={styles.sheetKicker}>{t('New collection')}</Text>
+                <Text style={styles.sheetTitle}>{t('Record payment')}</Text>
               </View>
               <Pressable disabled={saving} onPress={onClose} style={styles.sheetCloseButton}>
-                <Text style={styles.sheetCloseText}>Close</Text>
+                <Text style={styles.sheetCloseText}>{t('Close')}</Text>
               </Pressable>
             </View>
 
             {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
 
-            <Text style={styles.formLabel}>Customer</Text>
+            <Text style={styles.formLabel}>{t('Customer')}</Text>
             {tenantOptions.length ? (
               <ScrollView
                 nestedScrollEnabled
@@ -555,7 +558,7 @@ function PaymentFormSheet({
                 ))}
               </ScrollView>
             ) : (
-              <Text style={styles.formHelpText}>No customers found.</Text>
+              <Text style={styles.formHelpText}>{t('No customers found')}</Text>
             )}
 
             <View style={styles.formGrid}>
@@ -581,19 +584,19 @@ function PaymentFormSheet({
             </View>
 
             <View style={styles.formSummary}>
-              <AmountCell label={selectedBusinessType.feeLabel} styles={styles} value={money(tenantRent)} />
-              <AmountCell danger={balance > 0} label="Balance" styles={styles} value={money(balance)} />
-              <AmountCell label="Status" styles={styles} value={status} />
+              <AmountCell label={t(selectedBusinessType.feeLabel)} styles={styles} value={money(tenantRent)} />
+              <AmountCell danger={balance > 0} label={t('Balance')} styles={styles} value={money(balance)} />
+              <AmountCell label={t('Status')} styles={styles} value={t(status)} />
             </View>
 
             <TextField label="Note" onChangeText={setNote} placeholder="Optional note" value={note} />
 
             <View style={styles.sheetActions}>
               <Pressable disabled={saving} onPress={onClose} style={[styles.sheetSecondaryAction, saving && styles.disabledAction]}>
-                <Text style={styles.sheetSecondaryText}>Cancel</Text>
+                <Text style={styles.sheetSecondaryText}>{t('Cancel')}</Text>
               </Pressable>
               <Pressable disabled={saving} onPress={submit} style={[styles.sheetPrimaryAction, saving && styles.disabledAction]}>
-                {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.sheetPrimaryText}>Save payment</Text>}
+                {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.sheetPrimaryText}>{t('Save payment')}</Text>}
               </Pressable>
             </View>
           </ScrollView>
@@ -631,6 +634,7 @@ function DueCard({
   onRecordPayment: () => void;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const { t } = useLanguage();
   const type = getBusinessType(due.businessType);
   const canContact = Boolean(due.phone);
 
@@ -640,27 +644,27 @@ function DueCard({
         <View style={styles.recordCopy}>
           <Text style={styles.recordTitle}>{due.tenantName}</Text>
           <Text style={styles.recordMeta}>
-            {type.label} / {getCustomerAllocationLabel({ businessType: due.businessType, room: due.tenantRoom })}
+            {t(type.label)} / {getCustomerAllocationLabel({ businessType: due.businessType, room: due.tenantRoom })}
           </Text>
         </View>
         <StatusBadge status={due.status} styles={styles} />
       </View>
 
       <View style={styles.amountGrid}>
-        <AmountCell label={type.feeLabel} styles={styles} value={money(due.rent)} />
-        <AmountCell label="Paid" styles={styles} value={money(due.paid)} />
-        <AmountCell danger={due.balance > 0} label="Due" styles={styles} value={money(due.balance)} />
+        <AmountCell label={t(type.feeLabel)} styles={styles} value={money(due.rent)} />
+        <AmountCell label={t('Paid')} styles={styles} value={money(due.paid)} />
+        <AmountCell danger={due.balance > 0} label={t('Due')} styles={styles} value={money(due.balance)} />
       </View>
 
       <View style={styles.actions}>
         <Pressable disabled={!canContact} onPress={() => callPhone(due.phone)} style={[styles.actionButton, !canContact && styles.disabledAction]}>
-          <Text style={styles.actionText}>Call</Text>
+          <Text style={styles.actionText}>{t('Call')}</Text>
         </Pressable>
         <Pressable disabled={!canContact} onPress={() => openWhatsApp(due)} style={[styles.actionButton, styles.actionButtonAccent, !canContact && styles.disabledAction]}>
-          <Text style={styles.actionText}>WhatsApp</Text>
+          <Text style={styles.actionText}>{t('WhatsApp')}</Text>
         </Pressable>
         <Pressable onPress={onRecordPayment} style={[styles.actionButton, styles.actionButtonSurface]}>
-          <Text style={styles.actionTextAlt}>Record</Text>
+          <Text style={styles.actionTextAlt}>{t('Record')}</Text>
         </Pressable>
       </View>
     </View>
@@ -680,6 +684,7 @@ function PaymentCard({
   styles: ReturnType<typeof createStyles>;
   tenants: TenantRecord[];
 }) {
+  const { t } = useLanguage();
   const status = getPaymentStatus(payment);
   const allocation = getPaymentAllocationLabel(payment, tenants);
   const balance = toNumber(payment.balance);
@@ -698,13 +703,13 @@ function PaymentCard({
       </View>
 
       <View style={styles.amountGrid}>
-        <AmountCell label="Paid" styles={styles} value={money(getPaymentAmount(payment))} />
-        <AmountCell danger={balance > 0} label="Balance" styles={styles} value={money(balance)} />
+        <AmountCell label={t('Paid')} styles={styles} value={money(getPaymentAmount(payment))} />
+        <AmountCell danger={balance > 0} label={t('Balance')} styles={styles} value={money(balance)} />
       </View>
 
       {payment.note ? <Text style={styles.note}>{String(payment.note)}</Text> : null}
       <Pressable disabled={deleting} onPress={onDelete} style={[styles.deleteButton, deleting && styles.disabledAction]}>
-        <Text style={styles.deleteButtonText}>{deleting ? 'Deleting...' : 'Delete payment'}</Text>
+        <Text style={styles.deleteButtonText}>{t(deleting ? 'Deleting...' : 'Delete payment')}</Text>
       </Pressable>
     </View>
   );
@@ -730,6 +735,7 @@ function AmountCell({
 }
 
 function StatusBadge({ status, styles }: { status: string; styles: ReturnType<typeof createStyles> }) {
+  const { t } = useLanguage();
   const normalized = status.toLowerCase();
   const tone =
     normalized === 'paid'
@@ -742,7 +748,7 @@ function StatusBadge({ status, styles }: { status: string; styles: ReturnType<ty
 
   return (
     <View style={[styles.badge, tone]}>
-      <Text style={styles.badgeText}>{status}</Text>
+      <Text style={styles.badgeText}>{t(status)}</Text>
     </View>
   );
 }
@@ -754,12 +760,13 @@ function EmptyMoneyState({
   clearFilters: () => void;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const { t } = useLanguage();
   return (
     <View style={styles.emptyState}>
-      <Text style={styles.emptyTitle}>No payments found</Text>
-      <Text style={styles.emptyText}>Try changing the search or filters.</Text>
+      <Text style={styles.emptyTitle}>{t('No payments found')}</Text>
+      <Text style={styles.emptyText}>{t('Try changing the search or filters.')}</Text>
       <Pressable onPress={clearFilters} style={styles.emptyAction}>
-        <Text style={styles.emptyActionText}>Clear filters</Text>
+        <Text style={styles.emptyActionText}>{t('Clear filters')}</Text>
       </Pressable>
     </View>
   );

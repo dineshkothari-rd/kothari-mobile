@@ -20,6 +20,7 @@ import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollectio
 import type { NoticeRecord } from '../../shared/types/records';
 import { FilterPill } from '../customers/FilterPill';
 import { editableNoticeTypes, getNoticeType, noticeTypes } from './noticeTypes';
+import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
 type NoticeDraft = {
   message: string;
@@ -63,6 +64,7 @@ function formatDate(createdAt: NoticeRecord['createdAt']) {
 
 export function NoticesScreen() {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -118,7 +120,7 @@ export function NoticesScreen() {
       setShowForm(false);
       setEditingNotice(null);
     } catch (saveError) {
-      setActionError(saveError instanceof Error ? saveError.message : 'Could not save notice.');
+      setActionError(saveError instanceof Error ? saveError.message : t('Could not save notice.'));
     } finally {
       setSaving(false);
     }
@@ -131,16 +133,16 @@ export function NoticesScreen() {
     try {
       await deleteDoc(doc(db, 'notices', noticeId));
     } catch (deleteError) {
-      setActionError(deleteError instanceof Error ? deleteError.message : 'Could not delete notice.');
+      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete notice.'));
     } finally {
       setDeletingId('');
     }
   }
 
   function confirmDelete(notice: NoticeRecord) {
-    Alert.alert('Delete notice?', `Delete "${notice.title || 'Notice'}"? This cannot be undone.`, [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Delete', style: 'destructive', onPress: () => deleteNotice(notice.id) },
+    Alert.alert(t('Delete notice?'), `${t('Delete')} "${notice.title || t('Notice')}"? ${t('This cannot be undone.')}`, [
+      { text: t('Cancel'), style: 'cancel' },
+      { text: t('Delete'), style: 'destructive', onPress: () => deleteNotice(notice.id) },
     ]);
   }
 
@@ -162,26 +164,26 @@ export function NoticesScreen() {
       <View style={styles.hero}>
         <View style={styles.heroTop}>
           <View>
-            <Text style={styles.kicker}>Announcements</Text>
-            <Text style={styles.title}>Notices</Text>
-            <Text style={styles.subtitle}>Share important updates with everyone quickly.</Text>
+            <Text style={styles.kicker}>{t('Announcements')}</Text>
+            <Text style={styles.title}>{t('Notices')}</Text>
+            <Text style={styles.subtitle}>{t('Share important updates with everyone quickly.')}</Text>
           </View>
           <Pressable onPress={openCreateForm} style={styles.addButton}>
-            <Text style={styles.addButtonText}>Add notice</Text>
+            <Text style={styles.addButtonText}>{t('Add notice')}</Text>
           </Pressable>
         </View>
 
         <View style={styles.metrics}>
-          <Metric label="Total" styles={styles} value={String(notices.data.length)} />
-          <Metric danger label="Urgent" styles={styles} value={String(countByType(notices.data, 'danger'))} />
-          <Metric label="Warnings" styles={styles} value={String(countByType(notices.data, 'warning'))} />
+          <Metric label={t('Total')} styles={styles} value={String(notices.data.length)} />
+          <Metric danger label={t('Urgent')} styles={styles} value={String(countByType(notices.data, 'danger'))} />
+          <Metric label={t('Warnings')} styles={styles} value={String(countByType(notices.data, 'warning'))} />
         </View>
       </View>
 
       {notices.loading ? (
         <View style={styles.statusRow}>
           <ActivityIndicator color={colors.brand} />
-          <Text style={styles.statusText}>Loading notices</Text>
+          <Text style={styles.statusText}>{t('Loading notices')}</Text>
         </View>
       ) : null}
 
@@ -198,9 +200,9 @@ export function NoticesScreen() {
       </View>
 
       <View style={styles.summaryCard}>
-        <Text style={styles.summaryLabel}>Showing</Text>
+        <Text style={styles.summaryLabel}>{t('Showing')}</Text>
         <Text style={styles.summaryValue}>{filtered.length}</Text>
-        <Text style={styles.summaryMeta}>{typeFilter || search ? 'Filtered notices' : 'All notices'}</Text>
+        <Text style={styles.summaryMeta}>{t(typeFilter || search ? 'Filtered notices' : 'All notices')}</Text>
       </View>
 
       {filtered.length ? (
@@ -216,10 +218,10 @@ export function NoticesScreen() {
         ))
       ) : (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No notices found</Text>
-          <Text style={styles.emptyText}>Add a notice or change the filters.</Text>
+          <Text style={styles.emptyTitle}>{t('No notices found')}</Text>
+          <Text style={styles.emptyText}>{t('Add a notice or change the filters.')}</Text>
           <Pressable onPress={notices.data.length ? clearFilters : openCreateForm} style={styles.emptyAction}>
-            <Text style={styles.emptyActionText}>{notices.data.length ? 'Clear filters' : 'Add notice'}</Text>
+            <Text style={styles.emptyActionText}>{t(notices.data.length ? 'Clear filters' : 'Add notice')}</Text>
           </Pressable>
         </View>
       )}
@@ -240,6 +242,7 @@ function NoticeFormSheet({
   saving: boolean;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const { t } = useLanguage();
   const [title, setTitle] = useState(notice?.title || '');
   const [message, setMessage] = useState(notice?.message || '');
   const [type, setType] = useState(notice?.type || 'info');
@@ -247,7 +250,7 @@ function NoticeFormSheet({
 
   function submit() {
     if (!title.trim() || !message.trim()) {
-      setFormError('Title and message are required.');
+      setFormError(t('Title and message are required.'));
       return;
     }
 
@@ -266,17 +269,17 @@ function NoticeFormSheet({
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <View>
-                <Text style={styles.sheetKicker}>{notice ? 'Edit announcement' : 'New announcement'}</Text>
-                <Text style={styles.sheetTitle}>{notice ? 'Edit notice' : 'Add notice'}</Text>
+                <Text style={styles.sheetKicker}>{t(notice ? 'Edit announcement' : 'New announcement')}</Text>
+                <Text style={styles.sheetTitle}>{t(notice ? 'Edit notice' : 'Add notice')}</Text>
               </View>
               <Pressable disabled={saving} onPress={onClose} style={styles.sheetCloseButton}>
-                <Text style={styles.sheetCloseText}>Close</Text>
+                <Text style={styles.sheetCloseText}>{t('Close')}</Text>
               </Pressable>
             </View>
 
             {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
 
-            <Text style={styles.formLabel}>Type</Text>
+            <Text style={styles.formLabel}>{t('Type')}</Text>
             <View style={styles.typeRail}>
               {editableNoticeTypes.map((item) => (
                 <FilterPill active={type === item.value} key={item.value} label={item.label} onPress={() => setType(item.value)} />
@@ -307,10 +310,10 @@ function NoticeFormSheet({
 
             <View style={styles.sheetActions}>
               <Pressable disabled={saving} onPress={onClose} style={[styles.sheetSecondaryAction, saving && styles.disabled]}>
-                <Text style={styles.sheetSecondaryText}>Cancel</Text>
+                <Text style={styles.sheetSecondaryText}>{t('Cancel')}</Text>
               </Pressable>
               <Pressable disabled={saving} onPress={submit} style={[styles.sheetPrimaryAction, saving && styles.disabled]}>
-                {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.sheetPrimaryText}>{notice ? 'Save notice' : 'Publish notice'}</Text>}
+                {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.sheetPrimaryText}>{t(notice ? 'Save notice' : 'Publish notice')}</Text>}
               </Pressable>
             </View>
           </ScrollView>
@@ -333,14 +336,15 @@ function NoticeCard({
   onEdit: () => void;
   styles: ReturnType<typeof createStyles>;
 }) {
+  const { t } = useLanguage();
   const noticeType = getNoticeType(notice.type);
 
   return (
     <View style={[styles.card, toneStyle(notice.type, styles)]}>
       <View style={styles.cardHeader}>
         <View style={styles.cardCopy}>
-          <Text style={styles.typeLabel}>{noticeType.label}</Text>
-          <Text style={styles.cardTitle}>{notice.title || 'Notice'}</Text>
+          <Text style={styles.typeLabel}>{t(noticeType.label)}</Text>
+          <Text style={styles.cardTitle}>{notice.title || t('Notice')}</Text>
         </View>
         {formatDate(notice.createdAt) ? <Text style={styles.dateText}>{formatDate(notice.createdAt)}</Text> : null}
       </View>
@@ -349,10 +353,10 @@ function NoticeCard({
 
       <View style={styles.actions}>
         <Pressable onPress={onEdit} style={styles.actionButton}>
-          <Text style={styles.actionText}>Edit</Text>
+          <Text style={styles.actionText}>{t('Edit')}</Text>
         </Pressable>
         <Pressable disabled={deleting} onPress={onDelete} style={[styles.actionButton, styles.deleteButton, deleting && styles.disabled]}>
-          <Text style={styles.deleteText}>{deleting ? 'Deleting...' : 'Delete'}</Text>
+          <Text style={styles.deleteText}>{t(deleting ? 'Deleting...' : 'Delete')}</Text>
         </Pressable>
       </View>
     </View>

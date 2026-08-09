@@ -1,6 +1,7 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
 
 import { radius, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
+import { useLanguage } from '../i18n/LanguageProvider';
 
 type PrimaryButtonProps = {
   label: string;
@@ -10,6 +11,7 @@ type PrimaryButtonProps = {
 
 export function PrimaryButton({ label, loading = false, onPress }: PrimaryButtonProps) {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
 
   return (
@@ -19,7 +21,7 @@ export function PrimaryButton({ label, loading = false, onPress }: PrimaryButton
       onPress={onPress}
       style={({ pressed }) => [styles.button, pressed && !loading && styles.pressed, loading && styles.loading]}
     >
-      {loading ? <ActivityIndicator color={colors.onBrand} /> : <Text style={styles.label}>{label}</Text>}
+      {loading ? <ActivityIndicator color={colors.onBrand} /> : <Text style={styles.label}>{t(label)}</Text>}
     </Pressable>
   );
 }

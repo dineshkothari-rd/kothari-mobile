@@ -10,6 +10,7 @@ import { useAdminSession } from '../features/auth/useAdminSession';
 import { WorkspaceScreen } from '../features/admin/WorkspaceScreen';
 import { AppErrorBoundary } from '../shared/components/AppErrorBoundary';
 import { radius, spacing, typography, useAppTheme, type AppColors } from '../design/tokens';
+import { LanguageProvider, useLanguage } from '../shared/i18n/LanguageProvider';
 
 export function AppShell() {
   const session = useAdminSession();
@@ -23,38 +24,43 @@ export function AppShell() {
   }, [colors.canvas, colors.surface, isDark]);
 
   return (
-    <AppErrorBoundary>
-      <View style={styles.safeArea}>
-        <StatusBar style={isDark ? 'light' : 'dark'} />
-        {!firebaseConfigStatus.ready ? (
-          <MissingConfigScreen />
-        ) : session.status === 'checking' ? (
-          <CheckingScreen styles={styles} colors={colors} />
-        ) : session.admin ? (
-          <WorkspaceScreen admin={session.admin} onSignOut={session.signOut} />
-        ) : (
-          <SignInScreen error={session.error} loading={session.submitting} onSignIn={session.signIn} />
-        )}
-      </View>
-    </AppErrorBoundary>
+    <LanguageProvider>
+      <AppErrorBoundary>
+        <View style={styles.safeArea}>
+          <StatusBar style={isDark ? 'light' : 'dark'} />
+          {!firebaseConfigStatus.ready ? (
+            <MissingConfigScreen />
+          ) : session.status === 'checking' ? (
+            <CheckingScreen styles={styles} colors={colors} />
+          ) : session.admin ? (
+            <WorkspaceScreen admin={session.admin} onSignOut={session.signOut} />
+          ) : (
+            <SignInScreen error={session.error} loading={session.submitting} onSignIn={session.signIn} />
+          )}
+        </View>
+      </AppErrorBoundary>
+    </LanguageProvider>
   );
 }
 
 function CheckingScreen({ colors, styles }: { colors: AppColors; styles: ReturnType<typeof createStyles> }) {
+  const { t } = useLanguage();
+
   return (
     <View style={styles.centered}>
       <View style={styles.brandMark}>
         <Text style={styles.brandMarkText}>K</Text>
       </View>
       <ActivityIndicator color={colors.brand} style={styles.loader} />
-      <Text style={styles.centerTitle}>Getting things ready</Text>
-      <Text style={styles.centerText}>Opening your dashboard.</Text>
+      <Text style={styles.centerTitle}>{t('Getting things ready')}</Text>
+      <Text style={styles.centerText}>{t('Opening your dashboard.')}</Text>
     </View>
   );
 }
 
 function MissingConfigScreen() {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
 
   return (
@@ -62,9 +68,9 @@ function MissingConfigScreen() {
       <View style={styles.warningMark}>
         <Text style={styles.warningMarkText}>!</Text>
       </View>
-      <Text style={styles.centerTitle}>Setup needed</Text>
+      <Text style={styles.centerTitle}>{t('Setup needed')}</Text>
       <Text style={styles.centerText}>
-        Please complete app setup before signing in.
+        {t('Please complete app setup before signing in.')}
       </Text>
     </View>
   );

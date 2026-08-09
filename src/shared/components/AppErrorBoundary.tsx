@@ -2,6 +2,7 @@ import { Component, type ErrorInfo, type PropsWithChildren } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
+import { useLanguage } from '../i18n/LanguageProvider';
 
 type State = {
   errorMessage: string;
@@ -9,6 +10,7 @@ type State = {
 
 type InnerProps = PropsWithChildren & {
   styles: ReturnType<typeof createStyles>;
+  t: (text: string) => string;
 };
 
 class AppErrorBoundaryInner extends Component<InnerProps, State> {
@@ -27,13 +29,13 @@ class AppErrorBoundaryInner extends Component<InnerProps, State> {
   }
 
   render() {
-    const { styles } = this.props;
+    const { styles, t } = this.props;
 
     if (this.state.errorMessage) {
       return (
         <View style={styles.fallback}>
-          <Text style={styles.title}>We could not open the app.</Text>
-          <Text style={styles.message}>{this.state.errorMessage}</Text>
+          <Text style={styles.title}>{t('We could not open the app.')}</Text>
+          <Text style={styles.message}>{t(this.state.errorMessage)}</Text>
         </View>
       );
     }
@@ -44,9 +46,14 @@ class AppErrorBoundaryInner extends Component<InnerProps, State> {
 
 export function AppErrorBoundary({ children }: PropsWithChildren) {
   const { colors } = useAppTheme();
+  const { t } = useLanguage();
   const styles = createStyles(colors);
 
-  return <AppErrorBoundaryInner styles={styles}>{children}</AppErrorBoundaryInner>;
+  return (
+    <AppErrorBoundaryInner styles={styles} t={t}>
+      {children}
+    </AppErrorBoundaryInner>
+  );
 }
 
 function createStyles(colors: AppColors) {
