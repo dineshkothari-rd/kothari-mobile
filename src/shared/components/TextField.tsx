@@ -1,0 +1,42 @@
+import { StyleSheet, Text, TextInput, type TextInputProps, View } from 'react-native';
+
+import { colors, radius, spacing, typography } from '../../design/tokens';
+
+type TextFieldProps = TextInputProps & {
+  label: string;
+};
+
+export function TextField({ label, style, ...props }: TextFieldProps) {
+  return (
+    <View style={styles.wrap}>
+      <Text style={styles.label}>{label}</Text>
+      <TextInput
+        autoCapitalize="none"
+        placeholderTextColor={colors.muted}
+        style={[styles.input, style]}
+        {...props}
+      />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  wrap: {
+    gap: spacing.sm,
+  },
+  label: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: typography.weight.bold,
+  },
+  input: {
+    backgroundColor: colors.surface,
+    borderColor: colors.border,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    color: colors.text,
+    fontSize: 16,
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
+  },
+});
