@@ -1,13 +1,17 @@
 import { Component, type ErrorInfo, type PropsWithChildren } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { colors, spacing, typography } from '../../design/tokens';
+import { spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 
 type State = {
   errorMessage: string;
 };
 
-export class AppErrorBoundary extends Component<PropsWithChildren, State> {
+type InnerProps = PropsWithChildren & {
+  styles: ReturnType<typeof createStyles>;
+};
+
+class AppErrorBoundaryInner extends Component<InnerProps, State> {
   state: State = {
     errorMessage: '',
   };
@@ -23,6 +27,8 @@ export class AppErrorBoundary extends Component<PropsWithChildren, State> {
   }
 
   render() {
+    const { styles } = this.props;
+
     if (this.state.errorMessage) {
       return (
         <View style={styles.fallback}>
@@ -36,7 +42,15 @@ export class AppErrorBoundary extends Component<PropsWithChildren, State> {
   }
 }
 
-const styles = StyleSheet.create({
+export function AppErrorBoundary({ children }: PropsWithChildren) {
+  const { colors } = useAppTheme();
+  const styles = createStyles(colors);
+
+  return <AppErrorBoundaryInner styles={styles}>{children}</AppErrorBoundaryInner>;
+}
+
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   fallback: {
     alignItems: 'center',
     backgroundColor: colors.canvas,
@@ -57,4 +71,5 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     textAlign: 'center',
   },
-});
+  });
+}

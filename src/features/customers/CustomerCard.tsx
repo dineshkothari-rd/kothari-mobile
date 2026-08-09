@@ -1,0 +1,268 @@
+import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+
+import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
+import type { TenantRecord } from '../../shared/types/records';
+import { money } from '../../shared/utils/money';
+import { getBusinessType } from './businessTypes';
+import { getCustomerName, getCustomerStatus, getCustomerSubtitle } from './customerUtils';
+
+type CustomerCardProps = {
+  customer: TenantRecord;
+  expanded: boolean;
+  onToggle: () => void;
+};
+
+export function CustomerCard({ customer, expanded, onToggle }: CustomerCardProps) {
+  const { colors } = useAppTheme();
+  const styles = createStyles(colors);
+  const businessType = getBusinessType(customer.businessType);
+  const services = Array.isArray(customer.services) ? customer.services : [];
+  const status = getCustomerStatus(customer);
+
+  function callCustomer() {
+    if (!customer.phone) return;
+    Linking.openURL(`tel:${customer.phone}`).catch(() => undefined);
+  }
+
+  return (
+    <View style={[styles.card, expanded && styles.cardExpanded]}>
+      <View style={styles.header}>
+        <View style={styles.avatar}>
+          <Text style={styles.avatarText}>{getCustomerName(customer).slice(0, 1).toUpperCase()}</Text>
+        </View>
+        <View style={styles.nameBlock}>
+          <Text style={styles.name}>{getCustomerName(customer)}</Text>
+          <Text style={styles.subtitle}>{getCustomerSubtitle(customer)}</Text>
+        </View>
+        <View style={styles.statusPill}>
+          <Text style={styles.statusText}>{status}</Text>
+        </View>
+      </View>
+
+      <View style={styles.detailGrid}>
+        <Detail label={businessType.feeLabel} styles={styles} value={money(customer.rent)} />
+        <Detail action={callCustomer} label="Phone" styles={styles} value={customer.phone || '-'} />
+        <Detail label="Move in" styles={styles} value={customer.moveInDate || '-'} />
+        <Detail label="Move out" styles={styles} value={customer.moveOutDate || '-'} />
+      </View>
+
+      {services.length ? (
+        <View style={styles.services}>
+          {services.slice(0, 4).map((service) => (
+            <Text key={service} style={styles.service}>{service}</Text>
+          ))}
+        </View>
+      ) : null}
+
+      {customer.idProof ? (
+        <Text style={styles.proofText}>ID proof attached{customer.idProofName ? ` - ${customer.idProofName}` : ''}</Text>
+      ) : null}
+
+      <Pressable accessibilityRole="button" onPress={onToggle} style={styles.toggleButton}>
+        <Text style={styles.toggleButtonText}>{expanded ? 'Hide details' : 'View details'}</Text>
+      </Pressable>
+
+      {expanded ? (
+        <View style={styles.expandedPanel}>
+          <Text style={styles.expandedTitle}>Stay snapshot</Text>
+          <Text style={styles.expandedText}>
+            {services.length ? `${services.join(', ')} included.` : 'No services recorded yet.'}
+          </Text>
+          <View style={styles.expandedActions}>
+            <Pressable accessibilityRole="button" disabled={!customer.phone} onPress={callCustomer} style={styles.expandedAction}>
+              <Text style={styles.expandedActionText}>Call</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" onPress={onToggle} style={styles.expandedAction}>
+              <Text style={styles.expandedActionText}>Collapse</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+function Detail({
+  action,
+  label,
+  styles,
+  value,
+}: {
+  action?: () => void;
+  label: string;
+  styles: ReturnType<typeof createStyles>;
+  value: string;
+}) {
+  const content = (
+    <>
+      <Text style={styles.detailLabel}>{label}</Text>
+      <Text style={[styles.detailValue, action && styles.linkValue]} numberOfLines={1}>{value}</Text>
+    </>
+  );
+
+  if (action) {
+    return (
+      <Pressable accessibilityRole="button" onPress={action} style={styles.detailBox}>
+        {content}
+      </Pressable>
+    );
+  }
+
+  return <View style={styles.detailBox}>{content}</View>;
+}
+
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
+  card: {
+    backgroundColor: colors.surface,
+    borderColor: colors.borderSoft,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    padding: spacing.lg,
+    ...shadow.card,
+  },
+  cardExpanded: {
+    borderColor: colors.brand,
+  },
+  header: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  nameBlock: {
+    flex: 1,
+  },
+  avatar: {
+    alignItems: 'center',
+    backgroundColor: colors.copperSoft,
+    borderRadius: radius.md,
+    height: 42,
+    justifyContent: 'center',
+    width: 42,
+  },
+  avatarText: {
+    color: colors.copper,
+    fontSize: 18,
+    fontWeight: typography.weight.black,
+  },
+  name: {
+    color: colors.text,
+    fontSize: 17,
+    fontWeight: typography.weight.black,
+  },
+  subtitle: {
+    color: colors.muted,
+    fontSize: 13,
+    fontWeight: typography.weight.bold,
+    marginTop: 4,
+  },
+  statusPill: {
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  statusText: {
+    color: colors.text,
+    fontSize: 11,
+    fontWeight: typography.weight.black,
+    textTransform: 'uppercase',
+  },
+  detailGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  detailBox: {
+    backgroundColor: colors.surfaceRaised,
+    borderRadius: radius.md,
+    minHeight: 66,
+    padding: spacing.md,
+    width: '48%',
+  },
+  detailLabel: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: typography.weight.black,
+    textTransform: 'uppercase',
+  },
+  detailValue: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: typography.weight.black,
+    marginTop: 5,
+  },
+  linkValue: {
+    color: colors.brand,
+  },
+  services: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  service: {
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.sm,
+    color: colors.accent,
+    fontSize: 12,
+    fontWeight: typography.weight.bold,
+    overflow: 'hidden',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+  },
+  proofText: {
+    color: colors.copper,
+    fontSize: 12,
+    fontWeight: typography.weight.bold,
+    marginTop: spacing.md,
+  },
+  toggleButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.ink,
+    borderRadius: radius.sm,
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+  },
+  toggleButtonText: {
+    color: colors.onBrand,
+    fontSize: 12,
+    fontWeight: typography.weight.black,
+  },
+  expandedPanel: {
+    backgroundColor: colors.skySoft,
+    borderRadius: radius.md,
+    marginTop: spacing.md,
+    padding: spacing.md,
+  },
+  expandedTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: typography.weight.black,
+  },
+  expandedText: {
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: 4,
+  },
+  expandedActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  expandedAction: {
+    backgroundColor: colors.surface,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 7,
+  },
+  expandedActionText: {
+    color: colors.text,
+    fontSize: 12,
+    fontWeight: typography.weight.black,
+  },
+  });
+}

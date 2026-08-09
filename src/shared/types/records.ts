@@ -6,6 +6,11 @@ export type FirestoreRecord = {
 export type TenantRecord = FirestoreRecord & {
   businessType?: string;
   fullName?: string;
+  email?: string;
+  idProof?: string | null;
+  idProofName?: string | null;
+  idProofSize?: number;
+  moveInTime?: string;
   moveInDate?: string;
   moveOutDate?: string;
   moveOutTime?: string;
@@ -13,6 +18,8 @@ export type TenantRecord = FirestoreRecord & {
   phone?: string;
   rent?: number | string;
   room?: string;
+  roomType?: string;
+  services?: string[];
   status?: string;
   tenantName?: string;
 };

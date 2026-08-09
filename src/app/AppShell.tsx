@@ -1,35 +1,46 @@
+import { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { ActivityIndicator, SafeAreaView, StyleSheet, Text, View } from 'react-native';
+import * as NavigationBar from 'expo-navigation-bar';
+import * as SystemUI from 'expo-system-ui';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import { firebaseConfigStatus } from '../config/firebaseConfig';
 import { SignInScreen } from '../features/auth/SignInScreen';
 import { useAdminSession } from '../features/auth/useAdminSession';
 import { WorkspaceScreen } from '../features/admin/WorkspaceScreen';
 import { AppErrorBoundary } from '../shared/components/AppErrorBoundary';
-import { colors, radius, spacing, typography } from '../design/tokens';
+import { radius, spacing, typography, useAppTheme, type AppColors } from '../design/tokens';
 
 export function AppShell() {
   const session = useAdminSession();
+  const { colors, isDark } = useAppTheme();
+  const styles = createStyles(colors);
+
+  useEffect(() => {
+    SystemUI.setBackgroundColorAsync(colors.canvas).catch(() => undefined);
+    NavigationBar.setBackgroundColorAsync(colors.surface).catch(() => undefined);
+    NavigationBar.setButtonStyleAsync(isDark ? 'light' : 'dark').catch(() => undefined);
+  }, [colors.canvas, colors.surface, isDark]);
 
   return (
     <AppErrorBoundary>
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="dark" />
+      <View style={styles.safeArea}>
+        <StatusBar style={isDark ? 'light' : 'dark'} />
         {!firebaseConfigStatus.ready ? (
           <MissingConfigScreen />
         ) : session.status === 'checking' ? (
-          <CheckingScreen />
+          <CheckingScreen styles={styles} colors={colors} />
         ) : session.admin ? (
           <WorkspaceScreen admin={session.admin} onSignOut={session.signOut} />
         ) : (
           <SignInScreen error={session.error} loading={session.submitting} onSignIn={session.signIn} />
         )}
-      </SafeAreaView>
+      </View>
     </AppErrorBoundary>
   );
 }
 
-function CheckingScreen() {
+function CheckingScreen({ colors, styles }: { colors: AppColors; styles: ReturnType<typeof createStyles> }) {
   return (
     <View style={styles.centered}>
       <View style={styles.brandMark}>
@@ -43,6 +54,9 @@ function CheckingScreen() {
 }
 
 function MissingConfigScreen() {
+  const { colors } = useAppTheme();
+  const styles = createStyles(colors);
+
   return (
     <View style={styles.centered}>
       <View style={styles.warningMark}>
@@ -56,7 +70,8 @@ function MissingConfigScreen() {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.canvas,
@@ -110,4 +125,5 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
     textAlign: 'center',
   },
-});
+  });
+}

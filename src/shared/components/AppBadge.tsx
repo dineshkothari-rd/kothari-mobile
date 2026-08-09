@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { colors, radius, spacing, typography } from '../../design/tokens';
+import { radius, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 
 type AppBadgeProps = {
   label: string;
@@ -8,6 +8,9 @@ type AppBadgeProps = {
 };
 
 export function AppBadge({ label, tone = 'neutral' }: AppBadgeProps) {
+  const { colors } = useAppTheme();
+  const styles = createStyles(colors);
+
   return (
     <View style={[styles.badge, tone === 'success' && styles.success, tone === 'warning' && styles.warning]}>
       <Text style={[styles.label, tone === 'success' && styles.successText, tone === 'warning' && styles.warningText]}>
@@ -17,7 +20,8 @@ export function AppBadge({ label, tone = 'neutral' }: AppBadgeProps) {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   badge: {
     backgroundColor: colors.surfaceMuted,
     borderRadius: radius.sm,
@@ -41,4 +45,5 @@ const styles = StyleSheet.create({
   warningText: {
     color: colors.warning,
   },
-});
+  });
+}

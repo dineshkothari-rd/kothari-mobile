@@ -1,18 +1,21 @@
 import { useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { colors, radius, spacing, typography } from '../../design/tokens';
+import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { featureModules } from '../featureModules';
+import { CustomersScreen } from '../customers/CustomersScreen';
+import { MoneyScreen } from '../money/MoneyScreen';
 import { OperationsOverviewScreen } from '../operations/OperationsOverviewScreen';
 import type { AdminProfile } from '../../shared/types/admin';
 import { AppBadge } from '../../shared/components/AppBadge';
 import { ModuleCard } from '../../shared/components/ModuleCard';
 
 const primaryTabs = [
-  { id: 'overview', label: 'Home' },
-  { id: 'tenants', label: 'Rooms' },
-  { id: 'payments', label: 'Money' },
-  { id: 'more', label: 'More' },
+  { id: 'overview', label: 'Home', mark: 'H' },
+  { id: 'tenants', label: 'Rooms', mark: 'R' },
+  { id: 'payments', label: 'Money', mark: 'M' },
+  { id: 'more', label: 'More', mark: '••' },
 ];
 
 type WorkspaceScreenProps = {
@@ -22,6 +25,9 @@ type WorkspaceScreenProps = {
 
 export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
   const [activeTab, setActiveTab] = useState('overview');
+  const { colors } = useAppTheme();
+  const styles = createStyles(colors);
+  const insets = useSafeAreaInsets();
   const activeModules = useMemo(() => {
     if (activeTab === 'overview') return featureModules;
     if (activeTab === 'more') return featureModules.filter((feature) => !['overview', 'tenants', 'payments'].includes(feature.id));
@@ -30,28 +36,37 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
 
   return (
     <View style={styles.screen}>
-      <View style={styles.header}>
-        <View>
-          <Text style={styles.eyebrow}>Workspace</Text>
-          <Text style={styles.title}>Good to see you, {admin.name}.</Text>
+      <View style={[styles.header, { paddingTop: Math.max(insets.top + spacing.sm, spacing.lg) }]}>
+        <View style={styles.brandRow}>
+          <View style={styles.brandMark}>
+            <Text style={styles.brandMarkText}>K</Text>
+          </View>
+          <View style={styles.headerCopy}>
+            <Text style={styles.eyebrow}>Kothari Operations</Text>
+            <Text style={styles.title}>Hi, {admin.name}</Text>
+          </View>
         </View>
         <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.exitButton}>
           <Text style={styles.exitText}>Exit</Text>
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
+      <ScrollView contentContainerStyle={styles.content} style={styles.scroller}>
         {activeTab === 'overview' ? (
           <OperationsOverviewScreen />
+        ) : activeTab === 'tenants' ? (
+          <CustomersScreen />
+        ) : activeTab === 'payments' ? (
+          <MoneyScreen />
         ) : (
           <>
             <View style={styles.heroPanel}>
               <View style={styles.heroTop}>
-                <Text style={styles.heroTitle}>Feature staging</Text>
+                <Text style={styles.heroTitle}>Coming into focus</Text>
                 <AppBadge label="Coming next" />
               </View>
               <Text style={styles.heroText}>
-                This section will be rebuilt from pg-mobile with a new flow and interface.
+                This module will come across from pg-mobile after we shape the workflow and data states properly.
               </Text>
             </View>
 
@@ -64,69 +79,100 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
         )}
       </ScrollView>
 
-      <View style={styles.nav}>
-        {primaryTabs.map((tab) => {
-          const active = tab.id === activeTab;
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>
+        <View style={styles.nav}>
+          {primaryTabs.map((tab) => {
+            const active = tab.id === activeTab;
 
-          return (
-            <Pressable
-              accessibilityRole="button"
-              key={tab.id}
-              onPress={() => setActiveTab(tab.id)}
-              style={[styles.navItem, active && styles.navItemActive]}
-            >
-              <Text style={[styles.navLabel, active && styles.navLabelActive]}>{tab.label}</Text>
-            </Pressable>
-          );
-        })}
+            return (
+              <Pressable
+                accessibilityRole="button"
+                key={tab.id}
+                onPress={() => setActiveTab(tab.id)}
+                style={[styles.navItem, active && styles.navItemActive]}
+              >
+                <Text style={[styles.navMark, active && styles.navMarkActive]}>{tab.mark}</Text>
+                <Text style={[styles.navLabel, active && styles.navLabelActive]}>{tab.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   screen: {
     backgroundColor: colors.canvas,
     flex: 1,
   },
   header: {
     alignItems: 'center',
-    backgroundColor: colors.surface,
+    backgroundColor: colors.ink,
     borderBottomColor: colors.border,
-    borderBottomWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
-    padding: spacing.lg,
+    paddingBottom: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+  },
+  brandRow: {
+    alignItems: 'center',
+    flex: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
+  },
+  brandMark: {
+    alignItems: 'center',
+    backgroundColor: colors.copper,
+    borderRadius: radius.md,
+    height: 42,
+    justifyContent: 'center',
+    width: 42,
+  },
+  brandMarkText: {
+    color: colors.onBrand,
+    fontSize: 20,
+    fontWeight: typography.weight.black,
+  },
+  headerCopy: {
+    flex: 1,
   },
   eyebrow: {
-    color: colors.muted,
+    color: colors.panelSubtle,
     fontSize: 12,
     fontWeight: typography.weight.bold,
     textTransform: 'uppercase',
   },
   title: {
-    color: colors.text,
-    fontSize: 18,
+    color: colors.onBrand,
+    fontSize: 19,
     fontWeight: typography.weight.black,
     marginTop: 2,
   },
   exitButton: {
-    backgroundColor: colors.surfaceMuted,
+    backgroundColor: colors.overlaySubtle,
     borderRadius: radius.md,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
   },
   exitText: {
-    color: colors.text,
+    color: colors.onBrand,
     fontSize: 13,
     fontWeight: typography.weight.black,
   },
   content: {
+    flexGrow: 1,
     padding: spacing.lg,
-    paddingBottom: 104,
+    paddingBottom: spacing.xl,
+  },
+  scroller: {
+    flex: 1,
   },
   heroPanel: {
-    backgroundColor: colors.text,
+    backgroundColor: colors.ink,
     borderRadius: radius.lg,
     padding: spacing.lg,
   },
@@ -141,7 +187,7 @@ const styles = StyleSheet.create({
     lineHeight: 30,
   },
   heroText: {
-    color: '#D0D5DD',
+    color: colors.panelMuted,
     fontSize: 14,
     lineHeight: 21,
     marginTop: spacing.md,
@@ -150,35 +196,50 @@ const styles = StyleSheet.create({
     gap: spacing.md,
     marginTop: spacing.lg,
   },
-  nav: {
+  footer: {
     backgroundColor: colors.surface,
-    borderColor: colors.border,
+    borderTopColor: colors.border,
+    borderTopWidth: 1,
+    paddingBottom: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.sm,
+  },
+  nav: {
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.borderSoft,
     borderRadius: radius.lg,
     borderWidth: 1,
-    bottom: spacing.lg,
     flexDirection: 'row',
     gap: spacing.sm,
-    left: spacing.lg,
     padding: spacing.sm,
-    position: 'absolute',
-    right: spacing.lg,
+    ...shadow.dock,
   },
   navItem: {
     alignItems: 'center',
     borderRadius: radius.md,
     flex: 1,
-    minHeight: 44,
+    gap: 3,
+    minHeight: 50,
     justifyContent: 'center',
   },
   navItemActive: {
-    backgroundColor: colors.brand,
+    backgroundColor: colors.ink,
+  },
+  navMark: {
+    color: colors.subtle,
+    fontSize: 12,
+    fontWeight: typography.weight.black,
+  },
+  navMarkActive: {
+    color: colors.panelAccent,
   },
   navLabel: {
     color: colors.muted,
-    fontSize: 13,
+    fontSize: 12,
     fontWeight: typography.weight.black,
   },
   navLabelActive: {
     color: colors.onBrand,
   },
-});
+  });
+}

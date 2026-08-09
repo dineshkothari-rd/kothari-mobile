@@ -1,6 +1,6 @@
 import { ActivityIndicator, Pressable, StyleSheet, Text } from 'react-native';
 
-import { colors, radius, spacing, typography } from '../../design/tokens';
+import { radius, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 
 type PrimaryButtonProps = {
   label: string;
@@ -9,6 +9,9 @@ type PrimaryButtonProps = {
 };
 
 export function PrimaryButton({ label, loading = false, onPress }: PrimaryButtonProps) {
+  const { colors } = useAppTheme();
+  const styles = createStyles(colors);
+
   return (
     <Pressable
       accessibilityRole="button"
@@ -21,10 +24,11 @@ export function PrimaryButton({ label, loading = false, onPress }: PrimaryButton
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   button: {
     alignItems: 'center',
-    backgroundColor: colors.brand,
+    backgroundColor: colors.ink,
     borderRadius: radius.md,
     minHeight: 48,
     justifyContent: 'center',
@@ -41,4 +45,5 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: typography.weight.black,
   },
-});
+  });
+}

@@ -14,6 +14,65 @@ export function getMonthKey(date = new Date()) {
   return `${year}-${month}`;
 }
 
+export function shiftMonth(month: string, offset: number) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const date = new Date(year, monthNumber - 1 + offset, 1);
+  return getMonthKey(date);
+}
+
+export function getMonthDisplay(month: string) {
+  const [year, monthNumber] = month.split('-').map(Number);
+  const date = new Date(year, monthNumber - 1, 1);
+
+  if (Number.isNaN(date.getTime())) return month;
+
+  return date.toLocaleDateString('en-IN', {
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+export function getDayKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function readDateValue(record: Record<string, unknown>, fields: string[]) {
+  for (const field of fields) {
+    const value = record[field];
+
+    if (!value) continue;
+
+    if (typeof value === 'string') return value;
+
+    if (value instanceof Date) return getDayKey(value);
+
+    if (typeof value === 'object') {
+      if ('toDate' in value && typeof value.toDate === 'function') {
+        return getDayKey(value.toDate());
+      }
+
+      if ('seconds' in value && typeof value.seconds === 'number') {
+        return getDayKey(new Date(value.seconds * 1000));
+      }
+    }
+  }
+
+  return '';
+}
+
+export function matchesDay(record: Record<string, unknown>, day: string, fields: string[]) {
+  return readDateValue(record, fields).slice(0, 10) === day;
+}
+
+export function matchesMonth(record: Record<string, unknown>, month: string, fields: string[]) {
+  if (typeof record.month === 'string') return record.month === month;
+
+  return readDateValue(record, fields).slice(0, 7) === month;
+}
+
 export function getTenantName(tenant: TenantRecord) {
   return tenant.name || tenant.fullName || tenant.tenantName || 'Unnamed';
 }

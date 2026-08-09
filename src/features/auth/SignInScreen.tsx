@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
 
-import { colors, radius, spacing, typography } from '../../design/tokens';
+import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { PrimaryButton } from '../../shared/components/PrimaryButton';
 import { TextField } from '../../shared/components/TextField';
 
@@ -14,6 +14,8 @@ type SignInScreenProps = {
 export function SignInScreen({ error, loading, onSignIn }: SignInScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const { colors } = useAppTheme();
+  const styles = createStyles(colors);
 
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.screen}>
@@ -50,7 +52,8 @@ export function SignInScreen({ error, loading, onSignIn }: SignInScreenProps) {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   screen: {
     backgroundColor: colors.canvas,
     flex: 1,
@@ -62,7 +65,7 @@ const styles = StyleSheet.create({
   },
   mark: {
     alignItems: 'center',
-    backgroundColor: colors.brand,
+    backgroundColor: colors.ink,
     borderRadius: radius.md,
     height: 64,
     justifyContent: 'center',
@@ -75,7 +78,7 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.text,
-    fontSize: 30,
+    fontSize: 32,
     fontWeight: typography.weight.black,
     lineHeight: 36,
     marginTop: spacing.xl,
@@ -88,17 +91,19 @@ const styles = StyleSheet.create({
   },
   form: {
     backgroundColor: colors.surface,
-    borderColor: colors.border,
+    borderColor: colors.borderSoft,
     borderRadius: radius.lg,
     borderWidth: 1,
     gap: spacing.lg,
     marginTop: spacing.xl,
     padding: spacing.lg,
+    ...shadow.card,
   },
   error: {
-    color: '#B42318',
+    color: colors.danger,
     fontSize: 13,
     fontWeight: typography.weight.bold,
     lineHeight: 19,
   },
-});
+  });
+}

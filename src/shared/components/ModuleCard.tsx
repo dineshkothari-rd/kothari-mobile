@@ -1,6 +1,6 @@
 import { StyleSheet, Text, View } from 'react-native';
 
-import { colors, radius, spacing, typography } from '../../design/tokens';
+import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { AppBadge } from './AppBadge';
 import type { FeatureModule } from '../../features/featureModules';
 
@@ -11,6 +11,9 @@ const statusLabel = {
 };
 
 export function ModuleCard({ feature }: { feature: FeatureModule }) {
+  const { colors } = useAppTheme();
+  const styles = createStyles(colors);
+
   return (
     <View style={styles.card}>
       <View style={styles.cardHeader}>
@@ -25,13 +28,15 @@ export function ModuleCard({ feature }: { feature: FeatureModule }) {
   );
 }
 
-const styles = StyleSheet.create({
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
   card: {
     backgroundColor: colors.surface,
-    borderColor: colors.border,
+    borderColor: colors.borderSoft,
     borderRadius: radius.lg,
     borderWidth: 1,
     padding: spacing.lg,
+    ...shadow.card,
   },
   cardHeader: {
     alignItems: 'center',
@@ -52,9 +57,10 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
   collection: {
-    color: colors.accent,
+    color: colors.copper,
     fontSize: 12,
     fontWeight: typography.weight.bold,
     marginTop: spacing.md,
   },
-});
+  });
+}
