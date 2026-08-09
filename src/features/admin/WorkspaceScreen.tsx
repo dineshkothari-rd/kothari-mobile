@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { featureModules } from '../featureModules';
 import { CustomersScreen } from '../customers/CustomersScreen';
+import { MoreScreen } from '../more/MoreScreen';
 import { MoneyScreen } from '../money/MoneyScreen';
 import { OperationsOverviewScreen } from '../operations/OperationsOverviewScreen';
 import type { AdminProfile } from '../../shared/types/admin';
@@ -58,6 +59,8 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
           <CustomersScreen />
         ) : activeTab === 'payments' ? (
           <MoneyScreen />
+        ) : activeTab === 'more' ? (
+          <MoreScreen />
         ) : (
           <>
             <View style={styles.heroPanel}>

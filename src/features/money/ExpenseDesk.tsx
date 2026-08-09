@@ -1,0 +1,681 @@
+import { useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { addDoc, collection, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+
+import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
+import { db } from '../../lib/firebase/client';
+import { TextField } from '../../shared/components/TextField';
+import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
+import type { ExpenseRecord, PaymentRecord } from '../../shared/types/records';
+import { money, toNumber } from '../../shared/utils/money';
+import { FilterPill } from '../customers/FilterPill';
+import { getCollectedTotal, getExpenseAmount, getMonthDisplay, matchesMonth } from '../operations/operationsMath';
+import { editableExpenseCategories, expenseCategories, getExpenseCategory } from './expenseCategories';
+
+type ExpenseDraft = {
+  amount: number;
+  category: string;
+  date: string;
+  note: string;
+  paymentMode: string;
+  title: string;
+};
+
+function todayKey() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function getExpenseTitle(expense: ExpenseRecord) {
+  return expense.title || expense.name || expense.description || 'Expense';
+}
+
+function getExpenseDate(expense: ExpenseRecord) {
+  return String(expense.date || expense.expenseDate || '').slice(0, 10);
+}
+
+function matchesExpenseSearch(expense: ExpenseRecord, search: string) {
+  const query = search.trim().toLowerCase();
+
+  if (!query) return true;
+
+  return [getExpenseTitle(expense), expense.note, expense.paymentMode, expense.category].some((value) =>
+    String(value || '').toLowerCase().includes(query),
+  );
+}
+
+function getExpenseTotal(expenses: ExpenseRecord[]) {
+  return expenses.reduce((sum, expense) => sum + getExpenseAmount(expense), 0);
+}
+
+export function ExpenseDesk({ month }: { month: string }) {
+  const { colors } = useAppTheme();
+  const styles = createStyles(colors);
+  const [search, setSearch] = useState('');
+  const [category, setCategory] = useState('');
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState('');
+  const [actionError, setActionError] = useState('');
+  const expenses = useFirestoreCollection<ExpenseRecord>('expenses', { sortBy: 'createdAt' });
+  const payments = useFirestoreCollection<PaymentRecord>('payments', { sortBy: 'createdAt' });
+  const monthlyExpenses = useMemo(
+    () => expenses.data.filter((expense) => matchesMonth(expense, month, ['date', 'expenseDate', 'createdAt', 'updatedAt'])),
+    [expenses.data, month],
+  );
+  const monthlyPayments = useMemo(
+    () => payments.data.filter((payment) => matchesMonth(payment, month, ['paidOn', 'date', 'createdAt', 'updatedAt'])),
+    [month, payments.data],
+  );
+  const visibleExpenses = useMemo(
+    () =>
+      monthlyExpenses.filter((expense) => {
+        const categoryMatches = category ? expense.category === category : true;
+        return categoryMatches && matchesExpenseSearch(expense, search);
+      }),
+    [category, monthlyExpenses, search],
+  );
+  const income = getCollectedTotal(monthlyPayments);
+  const expenseTotal = getExpenseTotal(visibleExpenses);
+  const allExpenseTotal = getExpenseTotal(monthlyExpenses);
+  const net = income - allExpenseTotal;
+  const loading = expenses.loading || payments.loading;
+  const error = expenses.error || payments.error;
+
+  function clearFilters() {
+    setSearch('');
+    setCategory('');
+  }
+
+  async function createExpense(payload: ExpenseDraft) {
+    setSaving(true);
+    setActionError('');
+
+    try {
+      await addDoc(collection(db, 'expenses'), {
+        ...payload,
+        createdAt: serverTimestamp(),
+      });
+      setShowForm(false);
+    } catch (createError) {
+      setActionError(createError instanceof Error ? createError.message : 'Could not save expense.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteExpense(expenseId: string) {
+    setDeletingId(expenseId);
+    setActionError('');
+
+    try {
+      await deleteDoc(doc(db, 'expenses', expenseId));
+    } catch (deleteError) {
+      setActionError(deleteError instanceof Error ? deleteError.message : 'Could not delete expense.');
+    } finally {
+      setDeletingId('');
+    }
+  }
+
+  function confirmDelete(expense: ExpenseRecord) {
+    Alert.alert('Delete expense?', `Delete ${getExpenseTitle(expense)} for ${money(getExpenseAmount(expense))}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteExpense(expense.id) },
+    ]);
+  }
+
+  return (
+    <View style={styles.wrap}>
+      {showForm ? (
+        <ExpenseFormSheet month={month} onClose={() => setShowForm(false)} onSubmit={createExpense} saving={saving} styles={styles} />
+      ) : null}
+
+      <View style={styles.panel}>
+        <View style={styles.panelTop}>
+          <View>
+            <Text style={styles.kicker}>{getMonthDisplay(month)}</Text>
+            <Text style={styles.title}>Cash flow</Text>
+          </View>
+          <Pressable onPress={() => setShowForm(true)} style={styles.addButton}>
+            <Text style={styles.addButtonText}>Add expense</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.metrics}>
+          <Metric label="Income" styles={styles} value={money(income)} />
+          <Metric danger label="Expenses" styles={styles} value={money(allExpenseTotal)} />
+          <Metric danger={net < 0} label="Net" styles={styles} value={money(net)} />
+        </View>
+      </View>
+
+      {loading ? (
+        <View style={styles.statusRow}>
+          <ActivityIndicator color={colors.brand} />
+          <Text style={styles.statusText}>Loading cash flow records</Text>
+        </View>
+      ) : null}
+
+      {error ? <Text style={styles.errorText}>{error}</Text> : null}
+      {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
+
+      <View style={styles.toolbar}>
+        <TextField label="Search expenses" onChangeText={setSearch} placeholder="Title, note, mode, category..." value={search} />
+        <View style={styles.filterRail}>
+          {expenseCategories.map((item) => (
+            <FilterPill active={category === item.value} key={item.value || 'all'} label={item.label} onPress={() => setCategory(item.value)} />
+          ))}
+        </View>
+      </View>
+
+      <View style={styles.summaryCard}>
+        <Text style={styles.summaryLabel}>Visible expenses</Text>
+        <Text style={styles.summaryValue}>{money(expenseTotal)}</Text>
+        <Text style={styles.summaryMeta}>
+          {visibleExpenses.length} records in {getMonthDisplay(month)}
+        </Text>
+      </View>
+
+      {visibleExpenses.length ? (
+        visibleExpenses.slice(0, 50).map((expense) => (
+          <ExpenseCard
+            deleting={deletingId === expense.id}
+            expense={expense}
+            key={expense.id}
+            onDelete={() => confirmDelete(expense)}
+            styles={styles}
+          />
+        ))
+      ) : (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>No matching expenses</Text>
+          <Text style={styles.emptyText}>Add an expense or clear filters to see monthly cash movement.</Text>
+          <Pressable onPress={monthlyExpenses.length ? clearFilters : () => setShowForm(true)} style={styles.emptyAction}>
+            <Text style={styles.emptyActionText}>{monthlyExpenses.length ? 'Clear filters' : 'Add expense'}</Text>
+          </Pressable>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function ExpenseFormSheet({
+  month,
+  onClose,
+  onSubmit,
+  saving,
+  styles,
+}: {
+  month: string;
+  onClose: () => void;
+  onSubmit: (payload: ExpenseDraft) => void;
+  saving: boolean;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const [title, setTitle] = useState('');
+  const [amount, setAmount] = useState('');
+  const [category, setCategory] = useState('maintenance');
+  const [date, setDate] = useState(`${month}-${String(new Date().getDate()).padStart(2, '0')}`);
+  const [paymentMode, setPaymentMode] = useState('');
+  const [note, setNote] = useState('');
+  const [formError, setFormError] = useState('');
+
+  function submit() {
+    const parsedAmount = toNumber(amount);
+
+    if (!title.trim()) {
+      setFormError('Expense title is required.');
+      return;
+    }
+
+    if (!parsedAmount || parsedAmount <= 0) {
+      setFormError('Enter a valid amount.');
+      return;
+    }
+
+    if (!date.trim()) {
+      setFormError('Expense date is required.');
+      return;
+    }
+
+    onSubmit({
+      amount: parsedAmount,
+      category,
+      date: date.trim() || todayKey(),
+      note: note.trim(),
+      paymentMode: paymentMode.trim(),
+      title: title.trim(),
+    });
+  }
+
+  return (
+    <Modal animationType="slide" transparent visible onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.sheetBackdrop}>
+        <View style={styles.sheet}>
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <View>
+                <Text style={styles.sheetKicker}>Outgoing cost</Text>
+                <Text style={styles.sheetTitle}>Add expense</Text>
+              </View>
+              <Pressable disabled={saving} onPress={onClose} style={styles.sheetCloseButton}>
+                <Text style={styles.sheetCloseText}>Close</Text>
+              </Pressable>
+            </View>
+
+            {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
+
+            <Text style={styles.formLabel}>Category</Text>
+            <View style={styles.filterRail}>
+              {editableExpenseCategories.map((item) => (
+                <FilterPill active={category === item.value} key={item.value} label={item.label} onPress={() => setCategory(item.value)} />
+              ))}
+            </View>
+
+            <View style={styles.formGrid}>
+              <TextField label="Title" onChangeText={setTitle} placeholder="Electricity bill" value={title} />
+              <TextField keyboardType="numeric" label="Amount" onChangeText={setAmount} placeholder="2500" value={amount} />
+              <TextField label="Date" onChangeText={setDate} placeholder="YYYY-MM-DD" value={date} />
+              <TextField label="Payment mode" onChangeText={setPaymentMode} placeholder="Cash, UPI, bank transfer..." value={paymentMode} />
+              <TextField label="Note" multiline onChangeText={setNote} placeholder="Optional note" value={note} />
+            </View>
+
+            <View style={styles.sheetActions}>
+              <Pressable disabled={saving} onPress={onClose} style={[styles.sheetSecondaryAction, saving && styles.disabledAction]}>
+                <Text style={styles.sheetSecondaryText}>Cancel</Text>
+              </Pressable>
+              <Pressable disabled={saving} onPress={submit} style={[styles.sheetPrimaryAction, saving && styles.disabledAction]}>
+                {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.sheetPrimaryText}>Save expense</Text>}
+              </Pressable>
+            </View>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function ExpenseCard({
+  deleting,
+  expense,
+  onDelete,
+  styles,
+}: {
+  deleting: boolean;
+  expense: ExpenseRecord;
+  onDelete: () => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const category = getExpenseCategory(expense.category);
+
+  return (
+    <View style={styles.recordCard}>
+      <View style={styles.recordHeader}>
+        <View style={styles.recordCopy}>
+          <Text style={styles.recordCategory}>{category.label}</Text>
+          <Text style={styles.recordTitle}>{getExpenseTitle(expense)}</Text>
+          <Text style={styles.recordMeta}>
+            {getExpenseDate(expense) || 'No date'}
+            {expense.paymentMode ? ` / ${String(expense.paymentMode)}` : ''}
+          </Text>
+        </View>
+        <Text style={styles.recordAmount}>{money(getExpenseAmount(expense))}</Text>
+      </View>
+
+      {expense.note ? <Text style={styles.note}>{String(expense.note)}</Text> : null}
+      <Pressable disabled={deleting} onPress={onDelete} style={[styles.deleteButton, deleting && styles.disabledAction]}>
+        <Text style={styles.deleteButtonText}>{deleting ? 'Deleting...' : 'Delete expense'}</Text>
+      </Pressable>
+    </View>
+  );
+}
+
+function Metric({
+  danger = false,
+  label,
+  styles,
+  value,
+}: {
+  danger?: boolean;
+  label: string;
+  styles: ReturnType<typeof createStyles>;
+  value: string;
+}) {
+  return (
+    <View style={styles.metric}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={[styles.metricValue, danger && styles.metricDanger]}>{value}</Text>
+    </View>
+  );
+}
+
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
+    wrap: {
+      marginTop: spacing.lg,
+    },
+    panel: {
+      backgroundColor: colors.surface,
+      borderColor: colors.borderSoft,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      padding: spacing.lg,
+      ...shadow.card,
+    },
+    panelTop: {
+      alignItems: 'flex-start',
+      flexDirection: 'row',
+      gap: spacing.md,
+      justifyContent: 'space-between',
+    },
+    kicker: {
+      color: colors.muted,
+      fontSize: 12,
+      fontWeight: typography.weight.black,
+      textTransform: 'uppercase',
+    },
+    title: {
+      color: colors.text,
+      fontSize: 24,
+      fontWeight: typography.weight.black,
+      marginTop: spacing.xs,
+    },
+    addButton: {
+      backgroundColor: colors.ink,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    addButtonText: {
+      color: colors.onBrand,
+      fontSize: 13,
+      fontWeight: typography.weight.black,
+    },
+    metrics: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      marginTop: spacing.lg,
+    },
+    metric: {
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: radius.md,
+      flex: 1,
+      padding: spacing.md,
+    },
+    metricLabel: {
+      color: colors.muted,
+      fontSize: 11,
+      fontWeight: typography.weight.black,
+      textTransform: 'uppercase',
+    },
+    metricValue: {
+      color: colors.success,
+      fontSize: 14,
+      fontWeight: typography.weight.black,
+      marginTop: spacing.xs,
+    },
+    metricDanger: {
+      color: colors.danger,
+    },
+    statusRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm,
+      marginTop: spacing.lg,
+    },
+    statusText: {
+      color: colors.muted,
+      fontSize: 13,
+      fontWeight: typography.weight.bold,
+    },
+    errorText: {
+      backgroundColor: colors.dangerSoft,
+      borderColor: colors.danger,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      color: colors.danger,
+      fontSize: 13,
+      fontWeight: typography.weight.bold,
+      lineHeight: 19,
+      marginTop: spacing.lg,
+      padding: spacing.md,
+    },
+    toolbar: {
+      gap: spacing.md,
+      marginTop: spacing.lg,
+    },
+    filterRail: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+    },
+    summaryCard: {
+      backgroundColor: colors.surface,
+      borderColor: colors.borderSoft,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      marginTop: spacing.lg,
+      padding: spacing.lg,
+      ...shadow.card,
+    },
+    summaryLabel: {
+      color: colors.muted,
+      fontSize: 12,
+      fontWeight: typography.weight.black,
+      textTransform: 'uppercase',
+    },
+    summaryValue: {
+      color: colors.text,
+      fontSize: 26,
+      fontWeight: typography.weight.black,
+      marginTop: spacing.xs,
+    },
+    summaryMeta: {
+      color: colors.muted,
+      fontSize: 13,
+      fontWeight: typography.weight.bold,
+      lineHeight: 19,
+      marginTop: spacing.xs,
+    },
+    recordCard: {
+      backgroundColor: colors.surface,
+      borderColor: colors.borderSoft,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      marginTop: spacing.md,
+      padding: spacing.lg,
+      ...shadow.card,
+    },
+    recordHeader: {
+      alignItems: 'flex-start',
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    recordCopy: {
+      flex: 1,
+    },
+    recordCategory: {
+      color: colors.muted,
+      fontSize: 11,
+      fontWeight: typography.weight.black,
+      textTransform: 'uppercase',
+    },
+    recordTitle: {
+      color: colors.text,
+      fontSize: 16,
+      fontWeight: typography.weight.black,
+      lineHeight: 22,
+      marginTop: spacing.xs,
+    },
+    recordMeta: {
+      color: colors.muted,
+      fontSize: 13,
+      fontWeight: typography.weight.bold,
+      marginTop: spacing.xs,
+    },
+    recordAmount: {
+      color: colors.danger,
+      fontSize: 15,
+      fontWeight: typography.weight.black,
+    },
+    note: {
+      color: colors.muted,
+      fontSize: 13,
+      lineHeight: 19,
+      marginTop: spacing.md,
+    },
+    deleteButton: {
+      alignItems: 'center',
+      backgroundColor: colors.dangerSoft,
+      borderRadius: radius.md,
+      marginTop: spacing.md,
+      minHeight: 42,
+      justifyContent: 'center',
+    },
+    deleteButtonText: {
+      color: colors.danger,
+      fontSize: 13,
+      fontWeight: typography.weight.black,
+    },
+    disabledAction: {
+      opacity: 0.45,
+    },
+    emptyState: {
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      borderColor: colors.borderSoft,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      marginTop: spacing.md,
+      padding: spacing.xl,
+    },
+    emptyTitle: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: typography.weight.black,
+      textAlign: 'center',
+    },
+    emptyText: {
+      color: colors.muted,
+      fontSize: 14,
+      lineHeight: 20,
+      marginTop: spacing.sm,
+      textAlign: 'center',
+    },
+    emptyAction: {
+      backgroundColor: colors.ink,
+      borderRadius: radius.md,
+      marginTop: spacing.lg,
+      minHeight: 44,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.lg,
+    },
+    emptyActionText: {
+      color: colors.onBrand,
+      fontSize: 13,
+      fontWeight: typography.weight.black,
+    },
+    sheetBackdrop: {
+      backgroundColor: 'rgba(0,0,0,0.54)',
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    sheet: {
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: radius.lg,
+      borderTopRightRadius: radius.lg,
+      maxHeight: '92%',
+      padding: spacing.lg,
+    },
+    sheetHandle: {
+      alignSelf: 'center',
+      backgroundColor: colors.border,
+      borderRadius: radius.sm,
+      height: 4,
+      marginBottom: spacing.lg,
+      width: 44,
+    },
+    sheetHeader: {
+      alignItems: 'flex-start',
+      flexDirection: 'row',
+      gap: spacing.md,
+      justifyContent: 'space-between',
+    },
+    sheetKicker: {
+      color: colors.muted,
+      fontSize: 12,
+      fontWeight: typography.weight.black,
+      textTransform: 'uppercase',
+    },
+    sheetTitle: {
+      color: colors.text,
+      fontSize: 24,
+      fontWeight: typography.weight.black,
+      marginTop: spacing.xs,
+    },
+    sheetCloseButton: {
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    sheetCloseText: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: typography.weight.black,
+    },
+    formLabel: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: typography.weight.black,
+      marginBottom: spacing.sm,
+      marginTop: spacing.lg,
+      textTransform: 'uppercase',
+    },
+    formGrid: {
+      gap: spacing.md,
+      marginTop: spacing.lg,
+    },
+    sheetActions: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      marginTop: spacing.lg,
+    },
+    sheetSecondaryAction: {
+      alignItems: 'center',
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: radius.md,
+      flex: 1,
+      minHeight: 48,
+      justifyContent: 'center',
+    },
+    sheetSecondaryText: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: typography.weight.black,
+    },
+    sheetPrimaryAction: {
+      alignItems: 'center',
+      backgroundColor: colors.ink,
+      borderRadius: radius.md,
+      flex: 1,
+      minHeight: 48,
+      justifyContent: 'center',
+    },
+    sheetPrimaryText: {
+      color: colors.onBrand,
+      fontSize: 14,
+      fontWeight: typography.weight.black,
+    },
+  });
+}

@@ -1,0 +1,731 @@
+import { useMemo, useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
+import { addDoc, collection, deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+
+import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
+import { db } from '../../lib/firebase/client';
+import { TextField } from '../../shared/components/TextField';
+import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
+import type { NoticeRecord } from '../../shared/types/records';
+import { FilterPill } from '../customers/FilterPill';
+import { editableNoticeTypes, getNoticeType, noticeTypes } from './noticeTypes';
+
+type NoticeDraft = {
+  message: string;
+  title: string;
+  type: string;
+};
+
+function matchesSearch(notice: NoticeRecord, search: string) {
+  const query = search.trim().toLowerCase();
+
+  if (!query) return true;
+
+  return [notice.title, notice.message].some((value) => String(value || '').toLowerCase().includes(query));
+}
+
+function countByType(notices: NoticeRecord[], type: string) {
+  return notices.filter((notice) => notice.type === type).length;
+}
+
+function formatDate(createdAt: NoticeRecord['createdAt']) {
+  if (!createdAt) return '';
+
+  if (typeof createdAt.toDate === 'function') {
+    return createdAt.toDate().toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  }
+
+  if (createdAt.seconds) {
+    return new Date(createdAt.seconds * 1000).toLocaleDateString('en-IN', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  }
+
+  return '';
+}
+
+export function NoticesScreen() {
+  const { colors } = useAppTheme();
+  const styles = createStyles(colors);
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [editingNotice, setEditingNotice] = useState<NoticeRecord | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState('');
+  const [actionError, setActionError] = useState('');
+  const notices = useFirestoreCollection<NoticeRecord>('notices', { sortBy: 'createdAt' });
+  const filtered = useMemo(
+    () =>
+      notices.data.filter((notice) => {
+        const typeMatches = typeFilter ? notice.type === typeFilter : true;
+        return typeMatches && matchesSearch(notice, search);
+      }),
+    [notices.data, search, typeFilter],
+  );
+
+  function clearFilters() {
+    setSearch('');
+    setTypeFilter('');
+  }
+
+  function openCreateForm() {
+    setEditingNotice(null);
+    setActionError('');
+    setShowForm(true);
+  }
+
+  function openEditForm(notice: NoticeRecord) {
+    setEditingNotice(notice);
+    setActionError('');
+    setShowForm(true);
+  }
+
+  async function saveNotice(payload: NoticeDraft) {
+    setSaving(true);
+    setActionError('');
+
+    try {
+      if (editingNotice) {
+        await updateDoc(doc(db, 'notices', editingNotice.id), {
+          ...payload,
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await addDoc(collection(db, 'notices'), {
+          ...payload,
+          createdAt: serverTimestamp(),
+        });
+      }
+
+      setShowForm(false);
+      setEditingNotice(null);
+    } catch (saveError) {
+      setActionError(saveError instanceof Error ? saveError.message : 'Could not save notice.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteNotice(noticeId: string) {
+    setDeletingId(noticeId);
+    setActionError('');
+
+    try {
+      await deleteDoc(doc(db, 'notices', noticeId));
+    } catch (deleteError) {
+      setActionError(deleteError instanceof Error ? deleteError.message : 'Could not delete notice.');
+    } finally {
+      setDeletingId('');
+    }
+  }
+
+  function confirmDelete(notice: NoticeRecord) {
+    Alert.alert('Delete notice?', `Delete "${notice.title || 'Notice'}"? This cannot be undone.`, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => deleteNotice(notice.id) },
+    ]);
+  }
+
+  return (
+    <View style={styles.wrap}>
+      {showForm ? (
+        <NoticeFormSheet
+          notice={editingNotice}
+          onClose={() => {
+            setShowForm(false);
+            setEditingNotice(null);
+          }}
+          onSubmit={saveNotice}
+          saving={saving}
+          styles={styles}
+        />
+      ) : null}
+
+      <View style={styles.hero}>
+        <View style={styles.heroTop}>
+          <View>
+            <Text style={styles.kicker}>Announcements</Text>
+            <Text style={styles.title}>Notices</Text>
+            <Text style={styles.subtitle}>Publish operational updates for customers and keep important messages traceable.</Text>
+          </View>
+          <Pressable onPress={openCreateForm} style={styles.addButton}>
+            <Text style={styles.addButtonText}>Add notice</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.metrics}>
+          <Metric label="Total" styles={styles} value={String(notices.data.length)} />
+          <Metric danger label="Urgent" styles={styles} value={String(countByType(notices.data, 'danger'))} />
+          <Metric label="Warnings" styles={styles} value={String(countByType(notices.data, 'warning'))} />
+        </View>
+      </View>
+
+      {notices.loading ? (
+        <View style={styles.statusRow}>
+          <ActivityIndicator color={colors.brand} />
+          <Text style={styles.statusText}>Loading notices</Text>
+        </View>
+      ) : null}
+
+      {notices.error ? <Text style={styles.errorText}>{notices.error}</Text> : null}
+      {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
+
+      <View style={styles.toolbar}>
+        <TextField label="Search notices" onChangeText={setSearch} placeholder="Title or message..." value={search} />
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRail}>
+          {noticeTypes.map((type) => (
+            <FilterPill active={typeFilter === type.value} key={type.label} label={type.label} onPress={() => setTypeFilter(type.value)} />
+          ))}
+        </ScrollView>
+      </View>
+
+      <View style={styles.summaryCard}>
+        <Text style={styles.summaryLabel}>Visible notices</Text>
+        <Text style={styles.summaryValue}>{filtered.length}</Text>
+        <Text style={styles.summaryMeta}>{typeFilter || search ? 'Filtered notice board' : 'All notice records'} from Firebase</Text>
+      </View>
+
+      {filtered.length ? (
+        filtered.slice(0, 50).map((notice) => (
+          <NoticeCard
+            deleting={deletingId === notice.id}
+            key={notice.id}
+            notice={notice}
+            onDelete={() => confirmDelete(notice)}
+            onEdit={() => openEditForm(notice)}
+            styles={styles}
+          />
+        ))
+      ) : (
+        <View style={styles.emptyState}>
+          <Text style={styles.emptyTitle}>No matching notices</Text>
+          <Text style={styles.emptyText}>Publish a notice or clear filters to bring announcements back into view.</Text>
+          <Pressable onPress={notices.data.length ? clearFilters : openCreateForm} style={styles.emptyAction}>
+            <Text style={styles.emptyActionText}>{notices.data.length ? 'Clear filters' : 'Add notice'}</Text>
+          </Pressable>
+        </View>
+      )}
+    </View>
+  );
+}
+
+function NoticeFormSheet({
+  notice,
+  onClose,
+  onSubmit,
+  saving,
+  styles,
+}: {
+  notice: NoticeRecord | null;
+  onClose: () => void;
+  onSubmit: (payload: NoticeDraft) => void;
+  saving: boolean;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const [title, setTitle] = useState(notice?.title || '');
+  const [message, setMessage] = useState(notice?.message || '');
+  const [type, setType] = useState(notice?.type || 'info');
+  const [formError, setFormError] = useState('');
+
+  function submit() {
+    if (!title.trim() || !message.trim()) {
+      setFormError('Title and message are required.');
+      return;
+    }
+
+    onSubmit({
+      message: message.trim(),
+      title: title.trim(),
+      type,
+    });
+  }
+
+  return (
+    <Modal animationType="slide" transparent visible onRequestClose={onClose}>
+      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.sheetBackdrop}>
+        <View style={styles.sheet}>
+          <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <View>
+                <Text style={styles.sheetKicker}>{notice ? 'Edit announcement' : 'New announcement'}</Text>
+                <Text style={styles.sheetTitle}>{notice ? 'Edit notice' : 'Add notice'}</Text>
+              </View>
+              <Pressable disabled={saving} onPress={onClose} style={styles.sheetCloseButton}>
+                <Text style={styles.sheetCloseText}>Close</Text>
+              </Pressable>
+            </View>
+
+            {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
+
+            <Text style={styles.formLabel}>Type</Text>
+            <View style={styles.typeRail}>
+              {editableNoticeTypes.map((item) => (
+                <FilterPill active={type === item.value} key={item.value} label={item.label} onPress={() => setType(item.value)} />
+              ))}
+            </View>
+
+            <View style={styles.formGrid}>
+              <TextField
+                label="Title"
+                onChangeText={(value) => {
+                  setTitle(value);
+                  setFormError('');
+                }}
+                placeholder="Water supply interruption"
+                value={title}
+              />
+              <TextField
+                label="Message"
+                multiline
+                onChangeText={(value) => {
+                  setMessage(value);
+                  setFormError('');
+                }}
+                placeholder="Write the notice details..."
+                value={message}
+              />
+            </View>
+
+            <View style={styles.sheetActions}>
+              <Pressable disabled={saving} onPress={onClose} style={[styles.sheetSecondaryAction, saving && styles.disabled]}>
+                <Text style={styles.sheetSecondaryText}>Cancel</Text>
+              </Pressable>
+              <Pressable disabled={saving} onPress={submit} style={[styles.sheetPrimaryAction, saving && styles.disabled]}>
+                {saving ? <ActivityIndicator color="#FFFFFF" /> : <Text style={styles.sheetPrimaryText}>{notice ? 'Save notice' : 'Publish notice'}</Text>}
+              </Pressable>
+            </View>
+          </ScrollView>
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+function NoticeCard({
+  deleting,
+  notice,
+  onDelete,
+  onEdit,
+  styles,
+}: {
+  deleting: boolean;
+  notice: NoticeRecord;
+  onDelete: () => void;
+  onEdit: () => void;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const noticeType = getNoticeType(notice.type);
+
+  return (
+    <View style={[styles.card, toneStyle(notice.type, styles)]}>
+      <View style={styles.cardHeader}>
+        <View style={styles.cardCopy}>
+          <Text style={styles.typeLabel}>{noticeType.label}</Text>
+          <Text style={styles.cardTitle}>{notice.title || 'Notice'}</Text>
+        </View>
+        {formatDate(notice.createdAt) ? <Text style={styles.dateText}>{formatDate(notice.createdAt)}</Text> : null}
+      </View>
+
+      <Text style={styles.message}>{notice.message || '-'}</Text>
+
+      <View style={styles.actions}>
+        <Pressable onPress={onEdit} style={styles.actionButton}>
+          <Text style={styles.actionText}>Edit</Text>
+        </Pressable>
+        <Pressable disabled={deleting} onPress={onDelete} style={[styles.actionButton, styles.deleteButton, deleting && styles.disabled]}>
+          <Text style={styles.deleteText}>{deleting ? 'Deleting...' : 'Delete'}</Text>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+function toneStyle(type: unknown, styles: ReturnType<typeof createStyles>) {
+  if (type === 'success') return styles.successTone;
+  if (type === 'warning') return styles.warningTone;
+  if (type === 'danger') return styles.dangerTone;
+  return styles.infoTone;
+}
+
+function Metric({
+  danger = false,
+  label,
+  styles,
+  value,
+}: {
+  danger?: boolean;
+  label: string;
+  styles: ReturnType<typeof createStyles>;
+  value: string;
+}) {
+  return (
+    <View style={styles.metric}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={[styles.metricValue, danger && styles.metricDanger]}>{value}</Text>
+    </View>
+  );
+}
+
+function createStyles(colors: AppColors) {
+  return StyleSheet.create({
+    wrap: {
+      gap: spacing.lg,
+    },
+    hero: {
+      backgroundColor: colors.surface,
+      borderColor: colors.borderSoft,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      padding: spacing.lg,
+      ...shadow.card,
+    },
+    heroTop: {
+      alignItems: 'flex-start',
+      flexDirection: 'row',
+      gap: spacing.md,
+      justifyContent: 'space-between',
+    },
+    kicker: {
+      color: colors.muted,
+      fontSize: 12,
+      fontWeight: typography.weight.black,
+      textTransform: 'uppercase',
+    },
+    title: {
+      color: colors.text,
+      fontSize: 24,
+      fontWeight: typography.weight.black,
+      marginTop: spacing.xs,
+    },
+    subtitle: {
+      color: colors.muted,
+      fontSize: 14,
+      lineHeight: 21,
+      marginTop: spacing.sm,
+    },
+    addButton: {
+      backgroundColor: colors.ink,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    addButtonText: {
+      color: colors.onBrand,
+      fontSize: 13,
+      fontWeight: typography.weight.black,
+    },
+    metrics: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      marginTop: spacing.lg,
+    },
+    metric: {
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: radius.md,
+      flex: 1,
+      padding: spacing.md,
+    },
+    metricLabel: {
+      color: colors.muted,
+      fontSize: 11,
+      fontWeight: typography.weight.black,
+      textTransform: 'uppercase',
+    },
+    metricValue: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: typography.weight.black,
+      marginTop: spacing.xs,
+    },
+    metricDanger: {
+      color: colors.danger,
+    },
+    statusRow: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    statusText: {
+      color: colors.muted,
+      fontSize: 13,
+      fontWeight: typography.weight.bold,
+    },
+    errorText: {
+      backgroundColor: colors.dangerSoft,
+      borderColor: colors.danger,
+      borderRadius: radius.md,
+      borderWidth: 1,
+      color: colors.danger,
+      fontSize: 13,
+      fontWeight: typography.weight.bold,
+      lineHeight: 19,
+      padding: spacing.md,
+    },
+    toolbar: {
+      gap: spacing.md,
+    },
+    filterRail: {
+      gap: spacing.sm,
+      paddingRight: spacing.lg,
+    },
+    summaryCard: {
+      backgroundColor: colors.surface,
+      borderColor: colors.borderSoft,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      padding: spacing.lg,
+      ...shadow.card,
+    },
+    summaryLabel: {
+      color: colors.muted,
+      fontSize: 12,
+      fontWeight: typography.weight.black,
+      textTransform: 'uppercase',
+    },
+    summaryValue: {
+      color: colors.text,
+      fontSize: 28,
+      fontWeight: typography.weight.black,
+      marginTop: spacing.xs,
+    },
+    summaryMeta: {
+      color: colors.muted,
+      fontSize: 13,
+      fontWeight: typography.weight.bold,
+      lineHeight: 19,
+      marginTop: spacing.xs,
+    },
+    card: {
+      backgroundColor: colors.surface,
+      borderColor: colors.borderSoft,
+      borderLeftWidth: 4,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      padding: spacing.lg,
+      ...shadow.card,
+    },
+    infoTone: {
+      borderLeftColor: colors.brand,
+    },
+    successTone: {
+      borderLeftColor: colors.success,
+    },
+    warningTone: {
+      borderLeftColor: colors.warning,
+    },
+    dangerTone: {
+      borderLeftColor: colors.danger,
+    },
+    cardHeader: {
+      alignItems: 'flex-start',
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    cardCopy: {
+      flex: 1,
+    },
+    typeLabel: {
+      color: colors.muted,
+      fontSize: 11,
+      fontWeight: typography.weight.black,
+      textTransform: 'uppercase',
+    },
+    cardTitle: {
+      color: colors.text,
+      fontSize: 16,
+      fontWeight: typography.weight.black,
+      lineHeight: 22,
+      marginTop: spacing.xs,
+    },
+    dateText: {
+      color: colors.muted,
+      fontSize: 12,
+      fontWeight: typography.weight.bold,
+    },
+    message: {
+      color: colors.muted,
+      fontSize: 14,
+      lineHeight: 21,
+      marginTop: spacing.md,
+    },
+    actions: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      marginTop: spacing.md,
+    },
+    actionButton: {
+      alignItems: 'center',
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: radius.md,
+      flex: 1,
+      minHeight: 42,
+      justifyContent: 'center',
+    },
+    actionText: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: typography.weight.black,
+    },
+    deleteButton: {
+      backgroundColor: colors.dangerSoft,
+    },
+    deleteText: {
+      color: colors.danger,
+      fontSize: 13,
+      fontWeight: typography.weight.black,
+    },
+    disabled: {
+      opacity: 0.45,
+    },
+    emptyState: {
+      alignItems: 'center',
+      backgroundColor: colors.surface,
+      borderColor: colors.borderSoft,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      padding: spacing.xl,
+    },
+    emptyTitle: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: typography.weight.black,
+      textAlign: 'center',
+    },
+    emptyText: {
+      color: colors.muted,
+      fontSize: 14,
+      lineHeight: 20,
+      marginTop: spacing.sm,
+      textAlign: 'center',
+    },
+    emptyAction: {
+      backgroundColor: colors.ink,
+      borderRadius: radius.md,
+      marginTop: spacing.lg,
+      minHeight: 44,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.lg,
+    },
+    emptyActionText: {
+      color: colors.onBrand,
+      fontSize: 13,
+      fontWeight: typography.weight.black,
+    },
+    sheetBackdrop: {
+      backgroundColor: 'rgba(0,0,0,0.54)',
+      flex: 1,
+      justifyContent: 'flex-end',
+    },
+    sheet: {
+      backgroundColor: colors.surface,
+      borderTopLeftRadius: radius.lg,
+      borderTopRightRadius: radius.lg,
+      maxHeight: '92%',
+      padding: spacing.lg,
+    },
+    sheetHandle: {
+      alignSelf: 'center',
+      backgroundColor: colors.border,
+      borderRadius: radius.sm,
+      height: 4,
+      marginBottom: spacing.lg,
+      width: 44,
+    },
+    sheetHeader: {
+      alignItems: 'flex-start',
+      flexDirection: 'row',
+      gap: spacing.md,
+      justifyContent: 'space-between',
+    },
+    sheetKicker: {
+      color: colors.muted,
+      fontSize: 12,
+      fontWeight: typography.weight.black,
+      textTransform: 'uppercase',
+    },
+    sheetTitle: {
+      color: colors.text,
+      fontSize: 24,
+      fontWeight: typography.weight.black,
+      marginTop: spacing.xs,
+    },
+    sheetCloseButton: {
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    sheetCloseText: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: typography.weight.black,
+    },
+    formLabel: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: typography.weight.black,
+      marginBottom: spacing.sm,
+      marginTop: spacing.lg,
+      textTransform: 'uppercase',
+    },
+    typeRail: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: spacing.sm,
+    },
+    formGrid: {
+      gap: spacing.md,
+      marginTop: spacing.lg,
+    },
+    sheetActions: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+      marginTop: spacing.lg,
+    },
+    sheetSecondaryAction: {
+      alignItems: 'center',
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: radius.md,
+      flex: 1,
+      minHeight: 48,
+      justifyContent: 'center',
+    },
+    sheetSecondaryText: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: typography.weight.black,
+    },
+    sheetPrimaryAction: {
+      alignItems: 'center',
+      backgroundColor: colors.ink,
+      borderRadius: radius.md,
+      flex: 1,
+      minHeight: 48,
+      justifyContent: 'center',
+    },
+    sheetPrimaryText: {
+      color: colors.onBrand,
+      fontSize: 14,
+      fontWeight: typography.weight.black,
+    },
+  });
+}

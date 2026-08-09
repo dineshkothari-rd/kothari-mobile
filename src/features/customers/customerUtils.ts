@@ -6,7 +6,10 @@ export const customerStatusOptions = [
   { label: 'Active', value: 'active' },
   { label: 'Booked', value: 'booked' },
   { label: 'Checked In', value: 'checked in' },
+  { label: 'Checked Out', value: 'checked out' },
   { label: 'Occupied', value: 'occupied' },
+  { label: 'Inactive', value: 'inactive' },
+  { label: 'Cancelled', value: 'cancelled' },
 ];
 
 export function getCustomerName(customer: TenantRecord) {
@@ -28,7 +31,17 @@ export function matchesCustomerSearch(customer: TenantRecord, search: string) {
 
 export function getCustomerSubtitle(customer: TenantRecord) {
   const businessType = getBusinessType(customer.businessType);
-  const unit = customer.room || 'No allocation';
 
-  return `${businessType.label} - ${businessType.unitLabel} ${unit}`;
+  return `${businessType.label} - ${getCustomerAllocationLabel(customer)}`;
+}
+
+export function getCustomerAllocationLabel(customer: Pick<TenantRecord, 'businessType' | 'room'>) {
+  const businessType = getBusinessType(customer.businessType);
+  const allocation = String(customer.room || '').trim();
+
+  if (!allocation) return 'No allocation';
+
+  return allocation.toLowerCase().startsWith(businessType.unitLabel.toLowerCase())
+    ? allocation
+    : `${businessType.unitLabel} ${allocation}`;
 }

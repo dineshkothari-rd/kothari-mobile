@@ -18,7 +18,7 @@
     },
     "android": {
       "package": "com.kothari.mobile",
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "backgroundColor": "#ECFEFF",
         "foregroundImage": "./assets/android-icon-foreground.png",

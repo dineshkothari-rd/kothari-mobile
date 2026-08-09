@@ -8,16 +8,25 @@ import { getCustomerName, getCustomerStatus, getCustomerSubtitle } from './custo
 
 type CustomerCardProps = {
   customer: TenantRecord;
+  deleting?: boolean;
   expanded: boolean;
+  onDelete?: () => void;
+  onEdit?: () => void;
   onToggle: () => void;
+  onViewIdProof?: () => void;
 };
 
-export function CustomerCard({ customer, expanded, onToggle }: CustomerCardProps) {
+export function CustomerCard({ customer, deleting = false, expanded, onDelete, onEdit, onToggle, onViewIdProof }: CustomerCardProps) {
   const { colors } = useAppTheme();
   const styles = createStyles(colors);
   const businessType = getBusinessType(customer.businessType);
   const services = Array.isArray(customer.services) ? customer.services : [];
   const status = getCustomerStatus(customer);
+  const snapshotTitle = customer.businessType === 'library'
+    ? 'Membership snapshot'
+    : customer.businessType === 'hotel'
+      ? 'Stay snapshot'
+      : 'Tenant snapshot';
 
   function callCustomer() {
     if (!customer.phone) return;
@@ -42,8 +51,8 @@ export function CustomerCard({ customer, expanded, onToggle }: CustomerCardProps
       <View style={styles.detailGrid}>
         <Detail label={businessType.feeLabel} styles={styles} value={money(customer.rent)} />
         <Detail action={callCustomer} label="Phone" styles={styles} value={customer.phone || '-'} />
-        <Detail label="Move in" styles={styles} value={customer.moveInDate || '-'} />
-        <Detail label="Move out" styles={styles} value={customer.moveOutDate || '-'} />
+        <Detail label={businessType.startDateLabel} styles={styles} value={customer.moveInDate || '-'} />
+        <Detail label={businessType.endDateLabel} styles={styles} value={customer.moveOutDate || '-'} />
       </View>
 
       {services.length ? (
@@ -55,7 +64,9 @@ export function CustomerCard({ customer, expanded, onToggle }: CustomerCardProps
       ) : null}
 
       {customer.idProof ? (
-        <Text style={styles.proofText}>ID proof attached{customer.idProofName ? ` - ${customer.idProofName}` : ''}</Text>
+        <Pressable disabled={!onViewIdProof} onPress={onViewIdProof}>
+          <Text style={styles.proofText}>ID proof attached{customer.idProofName ? ` - ${customer.idProofName}` : ''}</Text>
+        </Pressable>
       ) : null}
 
       <Pressable accessibilityRole="button" onPress={onToggle} style={styles.toggleButton}>
@@ -64,7 +75,7 @@ export function CustomerCard({ customer, expanded, onToggle }: CustomerCardProps
 
       {expanded ? (
         <View style={styles.expandedPanel}>
-          <Text style={styles.expandedTitle}>Stay snapshot</Text>
+          <Text style={styles.expandedTitle}>{snapshotTitle}</Text>
           <Text style={styles.expandedText}>
             {services.length ? `${services.join(', ')} included.` : 'No services recorded yet.'}
           </Text>
@@ -72,10 +83,17 @@ export function CustomerCard({ customer, expanded, onToggle }: CustomerCardProps
             <Pressable accessibilityRole="button" disabled={!customer.phone} onPress={callCustomer} style={styles.expandedAction}>
               <Text style={styles.expandedActionText}>Call</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" onPress={onToggle} style={styles.expandedAction}>
-              <Text style={styles.expandedActionText}>Collapse</Text>
-            </Pressable>
+            {onEdit ? (
+              <Pressable accessibilityRole="button" onPress={onEdit} style={styles.expandedAction}>
+                <Text style={styles.expandedActionText}>Edit</Text>
+              </Pressable>
+            ) : null}
           </View>
+          {onDelete ? (
+            <Pressable accessibilityRole="button" disabled={deleting} onPress={onDelete} style={[styles.deleteAction, deleting && styles.disabledAction]}>
+              <Text style={styles.deleteActionText}>{deleting ? 'Deleting...' : 'Delete customer'}</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -263,6 +281,22 @@ function createStyles(colors: AppColors) {
     color: colors.text,
     fontSize: 12,
     fontWeight: typography.weight.black,
+  },
+  deleteAction: {
+    alignItems: 'center',
+    backgroundColor: colors.dangerSoft,
+    borderRadius: radius.md,
+    marginTop: spacing.md,
+    minHeight: 42,
+    justifyContent: 'center',
+  },
+  deleteActionText: {
+    color: colors.danger,
+    fontSize: 13,
+    fontWeight: typography.weight.black,
+  },
+  disabledAction: {
+    opacity: 0.45,
   },
   });
 }

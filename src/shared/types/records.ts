@@ -10,6 +10,7 @@ export type TenantRecord = FirestoreRecord & {
   idProof?: string | null;
   idProofName?: string | null;
   idProofSize?: number;
+  idProofType?: string | null;
   moveInTime?: string;
   moveInDate?: string;
   moveOutDate?: string;
@@ -50,6 +51,42 @@ export type ExpenseRecord = FirestoreRecord & {
   name?: string;
   title?: string;
   total?: number | string;
+};
+
+export type EnquiryRecord = FirestoreRecord & {
+  createdAt?: {
+    seconds?: number;
+    toDate?: () => Date;
+  };
+  email?: string;
+  message?: string;
+  name?: string;
+  phone?: string;
+  roomType?: string;
+  status?: string;
+};
+
+export type NoticeRecord = FirestoreRecord & {
+  createdAt?: {
+    seconds?: number;
+    toDate?: () => Date;
+  };
+  message?: string;
+  title?: string;
+  type?: string;
+};
+
+export type MeterReadingRecord = FirestoreRecord & {
+  billAmount?: number | string;
+  currentReading?: number | string;
+  month?: string;
+  note?: string;
+  previousReading?: number | string;
+  ratePerUnit?: number | string;
+  tenantId?: string;
+  tenantName?: string;
+  tenantRoom?: string;
+  unitsConsumed?: number | string;
 };
 
 export type DueRecord = {
