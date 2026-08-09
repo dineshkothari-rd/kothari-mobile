@@ -32,7 +32,7 @@ class AppErrorBoundaryInner extends Component<InnerProps, State> {
     if (this.state.errorMessage) {
       return (
         <View style={styles.fallback}>
-          <Text style={styles.title}>We could not open the workspace.</Text>
+          <Text style={styles.title}>We could not open the app.</Text>
           <Text style={styles.message}>{this.state.errorMessage}</Text>
         </View>
       );

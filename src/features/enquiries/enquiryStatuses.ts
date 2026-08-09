@@ -3,6 +3,7 @@ export const enquiryStatuses = [
   { label: 'New', value: 'New' },
   { label: 'Contacted', value: 'Contacted' },
   { label: 'Scheduled', value: 'Scheduled' },
+  { label: 'Converted', value: 'Converted' },
   { label: 'Closed', value: 'Closed' },
 ];
 

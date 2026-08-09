@@ -305,7 +305,7 @@ export function MoneyScreen() {
         <View style={styles.heroTop}>
           <View>
             <Text style={styles.kicker}>{getMonthDisplay(month)}</Text>
-            <Text style={styles.title}>Money desk</Text>
+            <Text style={styles.title}>Money</Text>
           </View>
           <View style={styles.viewSwitch}>
             {(['dues', 'collections', 'expenses'] as MoneyView[]).map((item) => {
@@ -355,7 +355,7 @@ export function MoneyScreen() {
       {loading ? (
         <View style={styles.statusRow}>
           <ActivityIndicator color={colors.brand} />
-          <Text style={styles.statusText}>Loading money records</Text>
+          <Text style={styles.statusText}>Loading money details</Text>
         </View>
       ) : null}
 
@@ -394,18 +394,18 @@ export function MoneyScreen() {
         <ExpenseDesk month={month} />
       ) : view === 'dues' ? (
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Visible due balance</Text>
+          <Text style={styles.summaryLabel}>Due balance</Text>
           <Text style={styles.summaryValue}>{money(visibleDuesSummary.balance)}</Text>
           <Text style={styles.summaryMeta}>
-            {visibleDues.length} accounts, {visibleDuesSummary.partialCount} partial, {visibleDuesSummary.pendingCount} pending
+            {visibleDues.length} customers, {visibleDuesSummary.partialCount} partial, {visibleDuesSummary.pendingCount} pending
           </Text>
         </View>
       ) : (
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>Visible collections</Text>
+          <Text style={styles.summaryLabel}>Collections</Text>
           <Text style={styles.summaryValue}>{money(collected)}</Text>
           <Text style={styles.summaryMeta}>
-            {visiblePayments.length} records for {getMonthDisplay(month)}, {money(balance)} balance tracked
+            {visiblePayments.length} payments in {getMonthDisplay(month)}, {money(balance)} still due
           </Text>
         </View>
       )}
@@ -756,8 +756,8 @@ function EmptyMoneyState({
 }) {
   return (
     <View style={styles.emptyState}>
-      <Text style={styles.emptyTitle}>No matching records</Text>
-      <Text style={styles.emptyText}>Adjust search or filters to bring the right money records back into view.</Text>
+      <Text style={styles.emptyTitle}>No payments found</Text>
+      <Text style={styles.emptyText}>Try changing the search or filters.</Text>
       <Pressable onPress={clearFilters} style={styles.emptyAction}>
         <Text style={styles.emptyActionText}>Clear filters</Text>
       </Pressable>

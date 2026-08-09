@@ -143,9 +143,9 @@ export function MeterScreen() {
       <View style={styles.hero}>
         <View style={styles.heroTop}>
           <View>
-            <Text style={styles.kicker}>Utility cycle</Text>
+            <Text style={styles.kicker}>Electricity</Text>
             <Text style={styles.title}>Meter readings</Text>
-            <Text style={styles.subtitle}>Capture current readings, calculate units, and keep electric billing records traceable.</Text>
+            <Text style={styles.subtitle}>Add readings and calculate the bill for each room.</Text>
           </View>
           <Pressable
             onPress={() => {
@@ -159,7 +159,7 @@ export function MeterScreen() {
         </View>
 
         <View style={styles.metrics}>
-          <Metric label="Records" styles={styles} value={String(filtered.length)} />
+          <Metric label="Readings" styles={styles} value={String(filtered.length)} />
           <Metric label="Units" styles={styles} value={String(totalUnits)} />
           <Metric label="Bill" styles={styles} value={money(totalBill)} />
         </View>
@@ -168,7 +168,7 @@ export function MeterScreen() {
       {loading ? (
         <View style={styles.statusRow}>
           <ActivityIndicator color={colors.brand} />
-          <Text style={styles.statusText}>Loading meter records</Text>
+          <Text style={styles.statusText}>Loading meter readings</Text>
         </View>
       ) : null}
 
@@ -176,7 +176,7 @@ export function MeterScreen() {
       {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
 
       <View style={styles.toolbar}>
-        <TextField label="Search readings" onChangeText={setSearch} placeholder="Customer, room, month, note..." value={search} />
+        <TextField label="Search readings" onChangeText={setSearch} placeholder="Name, room, month, note..." value={search} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRail}>
           <FilterPill active={!tenantFilter} label="All" onPress={() => setTenantFilter('')} />
           {meterCustomers.slice(0, 40).map((tenant) => (
@@ -191,8 +191,8 @@ export function MeterScreen() {
         ))
       ) : (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No matching readings</Text>
-          <Text style={styles.emptyText}>Add the first reading or clear filters to review meter history.</Text>
+          <Text style={styles.emptyTitle}>No readings found</Text>
+          <Text style={styles.emptyText}>Add a reading or change the filters.</Text>
           <Pressable onPress={readings.data.length ? clearFilters : () => setShowForm(true)} style={styles.emptyAction}>
             <Text style={styles.emptyActionText}>{readings.data.length ? 'Clear filters' : 'Add reading'}</Text>
           </Pressable>
@@ -293,7 +293,7 @@ function MeterFormSheet({
             <View style={styles.sheetHandle} />
             <View style={styles.sheetHeader}>
               <View>
-                <Text style={styles.sheetKicker}>Electric meter</Text>
+                <Text style={styles.sheetKicker}>Electricity</Text>
                 <Text style={styles.sheetTitle}>Add reading</Text>
               </View>
               <Pressable disabled={saving} onPress={onClose} style={styles.sheetCloseButton}>
@@ -316,7 +316,7 @@ function MeterFormSheet({
                 ))}
               </ScrollView>
             ) : (
-              <Text style={styles.helpText}>No PG or hotel room customers found.</Text>
+              <Text style={styles.helpText}>No rooms available for meter readings.</Text>
             )}
 
             <View style={styles.formGrid}>

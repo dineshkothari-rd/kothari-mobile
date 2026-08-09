@@ -43,7 +43,7 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
             <Text style={styles.brandMarkText}>K</Text>
           </View>
           <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>Kothari Operations</Text>
+            <Text style={styles.eyebrow}>Kothari</Text>
             <Text style={styles.title}>Hi, {admin.name}</Text>
           </View>
         </View>
@@ -65,11 +65,11 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
           <>
             <View style={styles.heroPanel}>
               <View style={styles.heroTop}>
-                <Text style={styles.heroTitle}>Coming into focus</Text>
-                <AppBadge label="Coming next" />
+                <Text style={styles.heroTitle}>Almost ready</Text>
+                <AppBadge label="Soon" />
               </View>
               <Text style={styles.heroText}>
-                This module will come across from pg-mobile after we shape the workflow and data states properly.
+                This section is being prepared for day-to-day use.
               </Text>
             </View>
 

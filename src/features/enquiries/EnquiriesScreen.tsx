@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { db } from '../../lib/firebase/client';
 import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import type { EnquiryRecord } from '../../shared/types/records';
+import { businessTypeOptions, getBusinessType } from '../customers/businessTypes';
 import { FilterPill } from '../customers/FilterPill';
 import { editableEnquiryStatuses, enquiryStatuses } from './enquiryStatuses';
 
@@ -56,6 +57,18 @@ function cleanPhone(phone: unknown) {
   return String(phone || '').replace(/\D/g, '');
 }
 
+function inferBusinessType(enquiry: EnquiryRecord) {
+  if (enquiry.businessType && businessTypeOptions.some((type) => type.id === enquiry.businessType)) {
+    return enquiry.businessType;
+  }
+
+  const text = [enquiry.roomType, enquiry.message].join(' ').toLowerCase();
+
+  if (/(library|seat|locker|reading|study)/.test(text)) return 'library';
+  if (/(hotel|guest|night|check.?in|check.?out|stay)/.test(text)) return 'hotel';
+  return 'pg';
+}
+
 function openLink(url: string) {
   Linking.openURL(url).catch(() => undefined);
 }
@@ -66,6 +79,7 @@ export function EnquiriesScreen() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [busyId, setBusyId] = useState('');
+  const [convertingId, setConvertingId] = useState('');
   const [actionError, setActionError] = useState('');
   const enquiries = useFirestoreCollection<EnquiryRecord>('enquiries', { sortBy: 'createdAt' });
   const filtered = useMemo(
@@ -111,6 +125,49 @@ export function EnquiriesScreen() {
     }
   }
 
+  async function convertEnquiry(enquiry: EnquiryRecord) {
+    const businessType = inferBusinessType(enquiry);
+    const type = getBusinessType(businessType);
+    const status = businessType === 'library' ? 'booked' : type.statusOptions[0]?.value || 'booked';
+
+    setConvertingId(enquiry.id);
+    setActionError('');
+
+    try {
+      await addDoc(collection(db, 'tenants'), {
+        businessType,
+        createdAt: serverTimestamp(),
+        email: enquiry.email || '',
+        idProof: null,
+        idProofName: null,
+        idProofSize: 0,
+        idProofType: null,
+        moveInDate: '',
+        moveInTime: '12:00',
+        moveOutDate: '',
+        moveOutTime: '11:00',
+        name: enquiry.name || 'Unnamed enquiry',
+        phone: enquiry.phone || '',
+        rent: 0,
+        room: '',
+        roomType: enquiry.roomType || '',
+        services: [],
+        sourceEnquiryId: enquiry.id,
+        sourceMessage: enquiry.message || '',
+        status,
+      });
+      await updateDoc(doc(db, 'enquiries', enquiry.id), {
+        convertedAt: serverTimestamp(),
+        status: 'Converted',
+        updatedAt: serverTimestamp(),
+      });
+    } catch (convertError) {
+      setActionError(convertError instanceof Error ? convertError.message : 'Could not convert enquiry.');
+    } finally {
+      setConvertingId('');
+    }
+  }
+
   function confirmDelete(enquiry: EnquiryRecord) {
     Alert.alert('Delete enquiry?', `Delete enquiry from ${enquiry.name || 'this person'}? This cannot be undone.`, [
       { text: 'Cancel', style: 'cancel' },
@@ -122,14 +179,14 @@ export function EnquiriesScreen() {
     <View>
       <View style={styles.hero}>
         <View>
-          <Text style={styles.kicker}>Lead follow-up</Text>
+          <Text style={styles.kicker}>New enquiries</Text>
           <Text style={styles.title}>Enquiries</Text>
-          <Text style={styles.subtitle}>Track new leads, contact them fast, and move each enquiry through the follow-up pipeline.</Text>
+          <Text style={styles.subtitle}>Call, message, and turn interested people into customers.</Text>
         </View>
         <View style={styles.metrics}>
           <Metric label="Total" styles={styles} value={String(enquiries.data.length)} />
           <Metric label="New" styles={styles} value={String(countByStatus(enquiries.data, 'New'))} />
-          <Metric label="Scheduled" styles={styles} value={String(countByStatus(enquiries.data, 'Scheduled'))} />
+          <Metric label="Converted" styles={styles} value={String(countByStatus(enquiries.data, 'Converted'))} />
         </View>
       </View>
 
@@ -144,7 +201,7 @@ export function EnquiriesScreen() {
       {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
 
       <View style={styles.toolbar}>
-        <TextField label="Search leads" onChangeText={setSearch} placeholder="Name, phone, room, email..." value={search} />
+        <TextField label="Search enquiries" onChangeText={setSearch} placeholder="Name, phone, room, seat..." value={search} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRail}>
           {enquiryStatuses.map((status) => (
             <FilterPill
@@ -158,9 +215,9 @@ export function EnquiriesScreen() {
       </View>
 
       <View style={styles.summaryCard}>
-        <Text style={styles.summaryLabel}>Visible leads</Text>
+        <Text style={styles.summaryLabel}>Showing</Text>
         <Text style={styles.summaryValue}>{filtered.length}</Text>
-        <Text style={styles.summaryMeta}>{statusFilter || search ? 'Filtered view' : 'All active enquiry records'} from Firebase</Text>
+        <Text style={styles.summaryMeta}>{statusFilter || search ? 'Filtered enquiries' : 'All enquiries'}</Text>
       </View>
 
       {filtered.length ? (
@@ -169,15 +226,17 @@ export function EnquiriesScreen() {
             busy={busyId === enquiry.id}
             enquiry={enquiry}
             key={enquiry.id}
+            onConvert={() => convertEnquiry(enquiry)}
             onDelete={() => confirmDelete(enquiry)}
             onStatusChange={(status) => updateStatus(enquiry, status)}
             styles={styles}
+            converting={convertingId === enquiry.id}
           />
         ))
       ) : (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No matching enquiries</Text>
-          <Text style={styles.emptyText}>New enquiries will appear here automatically when Firebase receives them.</Text>
+          <Text style={styles.emptyTitle}>No enquiries found</Text>
+          <Text style={styles.emptyText}>Try changing the search or filters.</Text>
           {search || statusFilter ? (
             <Pressable onPress={clearFilters} style={styles.emptyAction}>
               <Text style={styles.emptyActionText}>Clear filters</Text>
@@ -191,19 +250,25 @@ export function EnquiriesScreen() {
 
 function EnquiryCard({
   busy,
+  converting,
   enquiry,
+  onConvert,
   onDelete,
   onStatusChange,
   styles,
 }: {
   busy: boolean;
+  converting: boolean;
   enquiry: EnquiryRecord;
+  onConvert: () => void;
   onDelete: () => void;
   onStatusChange: (status: string) => void;
   styles: ReturnType<typeof createStyles>;
 }) {
   const status = getStatus(enquiry);
   const phone = cleanPhone(enquiry.phone);
+  const inferredType = getBusinessType(inferBusinessType(enquiry));
+  const converted = status === 'Converted';
   const whatsappMessage = encodeURIComponent(
     `Hi ${enquiry.name || ''}, thanks for your enquiry. We can help you with availability and pricing.`,
   );
@@ -222,13 +287,14 @@ function EnquiryCard({
 
       <View style={styles.infoGrid}>
         <InfoBox label="Phone" styles={styles} value={enquiry.phone || '-'} />
+        <InfoBox label="For" styles={styles} value={inferredType.label} />
         <InfoBox label="Requirement" styles={styles} value={enquiry.roomType || 'Not selected'} />
       </View>
 
       {enquiry.email ? <Text style={styles.email}>{enquiry.email}</Text> : null}
       {enquiry.message ? <Text style={styles.message}>{enquiry.message}</Text> : null}
 
-      <Text style={styles.sectionLabel}>Follow-up status</Text>
+      <Text style={styles.sectionLabel}>Status</Text>
       <View style={styles.statusRail}>
         {editableEnquiryStatuses.map((option) => {
           const active = status === option.value;
@@ -263,6 +329,12 @@ function EnquiryCard({
         <Pressable disabled={!phone} onPress={() => openLink(`https://wa.me/${phone}?text=${whatsappMessage}`)} style={[styles.actionButton, styles.actionButtonAccent, !phone && styles.disabled]}>
           <Text style={styles.actionText}>WhatsApp</Text>
         </Pressable>
+        <Pressable disabled={busy || converting || converted} onPress={onConvert} style={[styles.actionButton, styles.actionButtonSurface, (busy || converting || converted) && styles.disabled]}>
+          <Text style={styles.actionTextAlt}>{converted ? 'Converted' : converting ? 'Converting...' : 'Convert'}</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.actions}>
         <Pressable disabled={busy} onPress={onDelete} style={[styles.actionButton, styles.deleteButton, busy && styles.disabled]}>
           <Text style={styles.deleteText}>{busy ? 'Saving...' : 'Delete'}</Text>
         </Pressable>

@@ -164,7 +164,7 @@ export function NoticesScreen() {
           <View>
             <Text style={styles.kicker}>Announcements</Text>
             <Text style={styles.title}>Notices</Text>
-            <Text style={styles.subtitle}>Publish operational updates for customers and keep important messages traceable.</Text>
+            <Text style={styles.subtitle}>Share important updates with everyone quickly.</Text>
           </View>
           <Pressable onPress={openCreateForm} style={styles.addButton}>
             <Text style={styles.addButtonText}>Add notice</Text>
@@ -198,9 +198,9 @@ export function NoticesScreen() {
       </View>
 
       <View style={styles.summaryCard}>
-        <Text style={styles.summaryLabel}>Visible notices</Text>
+        <Text style={styles.summaryLabel}>Showing</Text>
         <Text style={styles.summaryValue}>{filtered.length}</Text>
-        <Text style={styles.summaryMeta}>{typeFilter || search ? 'Filtered notice board' : 'All notice records'} from Firebase</Text>
+        <Text style={styles.summaryMeta}>{typeFilter || search ? 'Filtered notices' : 'All notices'}</Text>
       </View>
 
       {filtered.length ? (
@@ -216,8 +216,8 @@ export function NoticesScreen() {
         ))
       ) : (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No matching notices</Text>
-          <Text style={styles.emptyText}>Publish a notice or clear filters to bring announcements back into view.</Text>
+          <Text style={styles.emptyTitle}>No notices found</Text>
+          <Text style={styles.emptyText}>Add a notice or change the filters.</Text>
           <Pressable onPress={notices.data.length ? clearFilters : openCreateForm} style={styles.emptyAction}>
             <Text style={styles.emptyActionText}>{notices.data.length ? 'Clear filters' : 'Add notice'}</Text>
           </Pressable>

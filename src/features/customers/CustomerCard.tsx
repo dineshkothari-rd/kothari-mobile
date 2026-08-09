@@ -77,7 +77,7 @@ export function CustomerCard({ customer, deleting = false, expanded, onDelete, o
         <View style={styles.expandedPanel}>
           <Text style={styles.expandedTitle}>{snapshotTitle}</Text>
           <Text style={styles.expandedText}>
-            {services.length ? `${services.join(', ')} included.` : 'No services recorded yet.'}
+            {services.length ? `${services.join(', ')} included.` : 'No services added yet.'}
           </Text>
           <View style={styles.expandedActions}>
             <Pressable accessibilityRole="button" disabled={!customer.phone} onPress={callCustomer} style={styles.expandedAction}>

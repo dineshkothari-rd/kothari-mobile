@@ -23,8 +23,8 @@ export function SignInScreen({ error, loading, onSignIn }: SignInScreenProps) {
         <View style={styles.mark}>
           <Text style={styles.markText}>K</Text>
         </View>
-        <Text style={styles.title}>Sign in to operations</Text>
-        <Text style={styles.subtitle}>Use an admin account already registered in Firebase.</Text>
+        <Text style={styles.title}>Welcome back</Text>
+        <Text style={styles.subtitle}>Sign in to manage rooms, payments, and daily work.</Text>
 
         <View style={styles.form}>
           <TextField

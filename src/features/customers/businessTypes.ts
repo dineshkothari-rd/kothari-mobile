@@ -1,10 +1,10 @@
 export const businessTypes = {
   hotel: {
     allocationCapacity: 1,
-    allocationHelp: 'One guest booking per room for the selected stay.',
+    allocationHelp: 'Pick an open room for this guest.',
     allocationTitle: 'Available hotel rooms',
     customerLabel: 'Guest',
-    detailsHint: 'Add stay dates, services, and ID proof after the room is reserved.',
+    detailsHint: 'Add stay dates, services, and ID proof when you have them.',
     endDateLabel: 'Check-out date',
     feeLabel: 'Stay Charge',
     flowLabel: 'Hotel booking',
@@ -23,10 +23,10 @@ export const businessTypes = {
   },
   library: {
     allocationCapacity: 1,
-    allocationHelp: 'Assign one available reading seat to each active member.',
+    allocationHelp: 'Enter the seat number you want to assign.',
     allocationTitle: 'Available library seats',
     customerLabel: 'Member',
-    detailsHint: 'Keep membership dates, facilities, and ID proof here.',
+    detailsHint: 'Add membership dates, facilities, and ID proof when ready.',
     endDateLabel: 'Membership end',
     feeLabel: 'Membership Fee',
     flowLabel: 'Library membership',
@@ -44,10 +44,10 @@ export const businessTypes = {
   },
   pg: {
     allocationCapacity: 2,
-    allocationHelp: 'Show only rooms with vacant beds, plus the current room while editing.',
+    allocationHelp: 'Pick a room with space available.',
     allocationTitle: 'Available PG rooms',
     customerLabel: 'Tenant',
-    detailsHint: 'Move-in dates, included facilities, and ID proof can be completed after allocation.',
+    detailsHint: 'Add move-in dates, facilities, and ID proof when ready.',
     endDateLabel: 'Expected move-out',
     feeLabel: 'Monthly Rent',
     flowLabel: 'PG tenant onboarding',

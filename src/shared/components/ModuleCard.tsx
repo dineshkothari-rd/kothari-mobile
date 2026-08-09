@@ -6,8 +6,8 @@ import type { FeatureModule } from '../../features/featureModules';
 
 const statusLabel = {
   ready: 'Ready',
-  next: 'Next',
-  planned: 'Planned',
+  next: 'Soon',
+  planned: 'Soon',
 };
 
 export function ModuleCard({ feature }: { feature: FeatureModule }) {
@@ -21,9 +21,6 @@ export function ModuleCard({ feature }: { feature: FeatureModule }) {
         <AppBadge label={statusLabel[feature.status]} tone={feature.status === 'ready' ? 'success' : 'neutral'} />
       </View>
       <Text style={styles.description}>{feature.description}</Text>
-      {feature.sourceCollection ? (
-        <Text style={styles.collection}>Firestore: {feature.sourceCollection}</Text>
-      ) : null}
     </View>
   );
 }

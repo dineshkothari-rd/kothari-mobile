@@ -191,9 +191,9 @@ export function CustomersScreen() {
       <View style={styles.hero}>
         <View style={styles.heroTop}>
           <View style={styles.heroCopy}>
-            <Text style={styles.kicker}>Customers & Rooms</Text>
-            <Text style={styles.title}>{tenants.data.length} records</Text>
-            <Text style={styles.subtitle}>Room allocation, stay status, and contact visibility for day-to-day operations.</Text>
+            <Text style={styles.kicker}>Stays & seats</Text>
+            <Text style={styles.title}>{tenants.data.length} customers</Text>
+            <Text style={styles.subtitle}>Manage guests, members, rooms, seats, and contact details.</Text>
           </View>
           <Pressable accessibilityRole="button" onPress={openCreateForm} style={styles.addButton}>
             <Text style={styles.addButtonText}>Add</Text>
@@ -204,7 +204,7 @@ export function CustomersScreen() {
       <View style={styles.summaryGrid}>
         <SummaryTile label="Occupied rooms" styles={styles} value={`${roomSummary.occupiedRooms}/${roomSummary.totalRooms}`} />
         <SummaryTile label="Available rooms" styles={styles} value={roomSummary.availableRooms} />
-        <SummaryTile label="Active room customers" styles={styles} value={roomSummary.activeRoomCustomers} />
+        <SummaryTile label="Staying now" styles={styles} value={roomSummary.activeRoomCustomers} />
       </View>
 
       <View style={styles.modeSwitch}>
@@ -239,14 +239,14 @@ export function CustomersScreen() {
 
       {selectedRoom ? (
         <Pressable accessibilityRole="button" onPress={() => setSelectedRoom('')} style={styles.activeRoomFilter}>
-          <Text style={styles.activeRoomFilterText}>Room {selectedRoom} selected - tap to clear</Text>
+          <Text style={styles.activeRoomFilterText}>Room {selectedRoom} selected. Tap to clear</Text>
         </Pressable>
       ) : null}
 
       <TextInput
         autoCapitalize="none"
         onChangeText={setSearch}
-        placeholder="Search name, room, phone..."
+        placeholder="Name, room, seat, phone..."
         placeholderTextColor={colors.muted}
         style={styles.search}
         value={search}
@@ -303,14 +303,14 @@ export function CustomersScreen() {
           ))
         ) : (
           <View style={styles.emptyState}>
-            <Text style={styles.emptyTitle}>No customers found</Text>
-            <Text style={styles.emptyText}>Try a different search or filter.</Text>
+          <Text style={styles.emptyTitle}>Nothing found</Text>
+          <Text style={styles.emptyText}>Try changing the search or filters.</Text>
           </View>
         )}
       </View>
 
       {filtered.length > 40 ? (
-        <Text style={styles.footerText}>Showing first 40 records. Use search to narrow the list.</Text>
+        <Text style={styles.footerText}>Showing first 40 customers. Search to find someone faster.</Text>
       ) : null}
     </View>
   );
@@ -728,7 +728,7 @@ function CustomerFormSheet({
                         </Text>
                       </View>
                     ) : (
-                      <Text style={styles.inlineHelp}>Enter a seat code to check live availability.</Text>
+                      <Text style={styles.inlineHelp}>Enter a seat code to check if it is free.</Text>
                     )}
                   </>
                 ) : availableAllocationOptions.length ? (

@@ -103,8 +103,8 @@ export function OperationsOverviewScreen() {
     },
     {
       id: 'meter',
-      label: 'Meter cycle',
-      meta: 'Reading records',
+      label: 'Meter readings',
+      meta: 'Rooms updated',
       value: periodMeterReadings.length,
       tone: colors.warning,
     },
@@ -138,22 +138,22 @@ export function OperationsOverviewScreen() {
             </Pressable>
           </View>
         ) : null}
-        <Text style={styles.netLabel}>Net position</Text>
+        <Text style={styles.netLabel}>Balance today</Text>
         <Text style={styles.netValue}>{money(net)}</Text>
-        <Text style={styles.title}>Live operating picture</Text>
+        <Text style={styles.title}>Today at a glance</Text>
         <Text style={styles.subtitle}>
           {period === 'Today'
-            ? 'Only records dated today are included in collected, expenses, and activity counts.'
+            ? 'Payments, expenses, and follow-ups added today.'
             : period === 'Month'
-              ? 'Current-month collections, expenses, dues, and activity counts from live Firebase data.'
-              : 'All-time collections, expenses, and activity counts from every synced record.'}
+              ? 'Collections, dues, expenses, and follow-ups for this month.'
+              : 'All payments, expenses, and follow-ups so far.'}
         </Text>
       </View>
 
       {loading ? (
         <View style={styles.statusRow}>
           <ActivityIndicator color={colors.brand} />
-          <Text style={styles.statusText}>Loading live records</Text>
+          <Text style={styles.statusText}>Loading latest details</Text>
         </View>
       ) : null}
 
@@ -170,8 +170,8 @@ export function OperationsOverviewScreen() {
 
       <View style={styles.actionSection}>
         <View style={styles.sectionTitleRow}>
-          <Text style={styles.panelTitle}>Action Board</Text>
-          <Text style={styles.sectionHint}>Tap to focus</Text>
+          <Text style={styles.panelTitle}>Next actions</Text>
+          <Text style={styles.sectionHint}>Tap to view</Text>
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionRail}>
           {quickActions.map((action) => {
@@ -196,16 +196,16 @@ export function OperationsOverviewScreen() {
           <Text style={styles.activeActionTitle}>{activeAction.label}</Text>
           <Text style={styles.activeActionValue}>{activeAction.value}</Text>
           <Text style={styles.activeActionText}>
-            {activeAction.meta}. This focus changes when you tap another action card.
+            {activeAction.meta}. Choose another card to check a different area.
           </Text>
         </View>
       </View>
 
       <View style={styles.focusPanel}>
-        <Text style={styles.panelTitle}>Priority Queue</Text>
+        <Text style={styles.panelTitle}>Needs attention</Text>
         <FocusRow accent={colors.danger} label="Outstanding dues" styles={styles} value={`${duesSummary.pendingCount + duesSummary.partialCount} accounts`} />
         <FocusRow accent={colors.accent} label={`${period} enquiries`} styles={styles} value={`${periodEnquiries.length} leads`} />
-        <FocusRow accent={colors.warning} label={`${period} meter records`} styles={styles} value={`${periodMeterReadings.length} readings`} />
+        <FocusRow accent={colors.warning} label={`${period} meter readings`} styles={styles} value={`${periodMeterReadings.length} readings`} />
         <FocusRow accent={colors.brand} label={`${period} notices`} styles={styles} value={`${periodNotices.length} notices`} />
       </View>
     </View>

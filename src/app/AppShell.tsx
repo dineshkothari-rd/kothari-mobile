@@ -47,8 +47,8 @@ function CheckingScreen({ colors, styles }: { colors: AppColors; styles: ReturnT
         <Text style={styles.brandMarkText}>K</Text>
       </View>
       <ActivityIndicator color={colors.brand} style={styles.loader} />
-      <Text style={styles.centerTitle}>Checking admin access</Text>
-      <Text style={styles.centerText}>Preparing the secure operations workspace.</Text>
+      <Text style={styles.centerTitle}>Getting things ready</Text>
+      <Text style={styles.centerText}>Opening your dashboard.</Text>
     </View>
   );
 }
@@ -62,9 +62,9 @@ function MissingConfigScreen() {
       <View style={styles.warningMark}>
         <Text style={styles.warningMarkText}>!</Text>
       </View>
-      <Text style={styles.centerTitle}>Firebase is not configured</Text>
+      <Text style={styles.centerTitle}>Setup needed</Text>
       <Text style={styles.centerText}>
-        Add the Expo public Firebase environment variables before signing in.
+        Please complete app setup before signing in.
       </Text>
     </View>
   );

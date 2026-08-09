@@ -161,7 +161,7 @@ export function ExpenseDesk({ month }: { month: string }) {
       {loading ? (
         <View style={styles.statusRow}>
           <ActivityIndicator color={colors.brand} />
-          <Text style={styles.statusText}>Loading cash flow records</Text>
+          <Text style={styles.statusText}>Loading cash flow</Text>
         </View>
       ) : null}
 
@@ -169,7 +169,7 @@ export function ExpenseDesk({ month }: { month: string }) {
       {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
 
       <View style={styles.toolbar}>
-        <TextField label="Search expenses" onChangeText={setSearch} placeholder="Title, note, mode, category..." value={search} />
+        <TextField label="Search expenses" onChangeText={setSearch} placeholder="Title, note, payment mode..." value={search} />
         <View style={styles.filterRail}>
           {expenseCategories.map((item) => (
             <FilterPill active={category === item.value} key={item.value || 'all'} label={item.label} onPress={() => setCategory(item.value)} />
@@ -178,10 +178,10 @@ export function ExpenseDesk({ month }: { month: string }) {
       </View>
 
       <View style={styles.summaryCard}>
-        <Text style={styles.summaryLabel}>Visible expenses</Text>
+        <Text style={styles.summaryLabel}>Expenses shown</Text>
         <Text style={styles.summaryValue}>{money(expenseTotal)}</Text>
         <Text style={styles.summaryMeta}>
-          {visibleExpenses.length} records in {getMonthDisplay(month)}
+          {visibleExpenses.length} expenses in {getMonthDisplay(month)}
         </Text>
       </View>
 
@@ -197,8 +197,8 @@ export function ExpenseDesk({ month }: { month: string }) {
         ))
       ) : (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyTitle}>No matching expenses</Text>
-          <Text style={styles.emptyText}>Add an expense or clear filters to see monthly cash movement.</Text>
+          <Text style={styles.emptyTitle}>No expenses found</Text>
+          <Text style={styles.emptyText}>Add an expense or change the filters.</Text>
           <Pressable onPress={monthlyExpenses.length ? clearFilters : () => setShowForm(true)} style={styles.emptyAction}>
             <Text style={styles.emptyActionText}>{monthlyExpenses.length ? 'Clear filters' : 'Add expense'}</Text>
           </Pressable>

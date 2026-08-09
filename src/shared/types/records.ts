@@ -54,6 +54,7 @@ export type ExpenseRecord = FirestoreRecord & {
 };
 
 export type EnquiryRecord = FirestoreRecord & {
+  businessType?: string;
   createdAt?: {
     seconds?: number;
     toDate?: () => Date;
