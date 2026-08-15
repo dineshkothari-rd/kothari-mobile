@@ -166,6 +166,23 @@ function getBalanceTotal(payments: PaymentRecord[]) {
   return payments.reduce((sum, payment) => sum + toNumber(payment.balance), 0);
 }
 
+function getPaymentTime(payment: PaymentRecord) {
+  for (const value of [payment.createdAt, payment.updatedAt]) {
+    if (value?.toDate) return value.toDate().getTime();
+    if (typeof value?.seconds === 'number') return value.seconds * 1000;
+  }
+
+  const text = String(payment.paidOn || payment.date || '');
+  const indianDate = text.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+
+  if (indianDate) {
+    return new Date(Number(indianDate[3]), Number(indianDate[2]) - 1, Number(indianDate[1])).getTime();
+  }
+
+  const parsed = new Date(text).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
 function getPhoneDigits(phone: string) {
   return phone.replace(/\D/g, '');
 }
@@ -441,6 +458,10 @@ export function MoneyScreen() {
       ),
     [monthlyPayments, paymentFilter, search, tenants.data],
   );
+  const latestPayments = useMemo(
+    () => [...payments.data].sort((first, second) => getPaymentTime(second) - getPaymentTime(first)).slice(0, 5),
+    [payments.data],
+  );
   const duesSummary = summarizeDues(dues);
   const visibleDuesSummary = summarizeDues(visibleDues);
   const collected = getCollectedTotal(visiblePayments);
@@ -616,6 +637,31 @@ export function MoneyScreen() {
 
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
       {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
+
+      <View style={styles.latestPanel}>
+        <View style={styles.latestHeader}>
+          <View>
+            <Text style={styles.latestTitle}>{t('Latest payments')}</Text>
+            <Text style={styles.latestHint}>{t('Most recently recorded collections')}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => {
+              setView('collections');
+              setPaymentFilter('all');
+              setSearch('');
+            }}
+            style={styles.latestAction}
+          >
+            <Text style={styles.latestActionText}>{t('View records')}</Text>
+          </Pressable>
+        </View>
+        {latestPayments.length ? latestPayments.map((payment) => (
+          <LatestPaymentRow key={payment.id} payment={payment} styles={styles} tenants={tenants.data} />
+        )) : (
+          <Text style={styles.latestEmpty}>{t('No payments recorded yet.')}</Text>
+        )}
+      </View>
 
       {view === 'expenses' ? null : (
         <View style={styles.toolbar}>
@@ -857,6 +903,35 @@ function PaymentFormSheet({
         </View>
       </KeyboardAvoidingView>
     </Modal>
+  );
+}
+
+function LatestPaymentRow({
+  payment,
+  styles,
+  tenants,
+}: {
+  payment: PaymentRecord;
+  styles: ReturnType<typeof createStyles>;
+  tenants: TenantRecord[];
+}) {
+  const { t } = useLanguage();
+  const allocation = getPaymentAllocationLabel(payment, tenants);
+
+  return (
+    <View style={styles.latestRow}>
+      <View style={styles.latestRowCopy}>
+        <Text style={styles.latestName}>{getPaymentTenantName(payment, tenants)}</Text>
+        <Text style={styles.latestMeta}>
+          {payment.paidOn || payment.date || payment.month || t('Date unavailable')}
+          {allocation !== 'No allocation' ? ` / ${allocation}` : ''}
+        </Text>
+      </View>
+      <View style={styles.latestAmountWrap}>
+        <Text style={styles.latestAmount}>{money(getPaymentAmount(payment))}</Text>
+        <Text style={styles.latestStatus}>{t(getPaymentStatus(payment))}</Text>
+      </View>
+    </View>
   );
 }
 
@@ -1188,6 +1263,84 @@ function createStyles(colors: AppColors) {
     toolbar: {
       gap: spacing.md,
       marginTop: spacing.lg,
+    },
+    latestPanel: {
+      backgroundColor: colors.surface,
+      borderColor: colors.borderSoft,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      marginTop: spacing.lg,
+      padding: spacing.lg,
+      ...shadow.card,
+    },
+    latestHeader: {
+      alignItems: 'center',
+      flexDirection: 'row',
+      gap: spacing.md,
+      justifyContent: 'space-between',
+      marginBottom: spacing.sm,
+    },
+    latestTitle: {
+      color: colors.text,
+      fontSize: 17,
+      fontWeight: typography.weight.black,
+    },
+    latestHint: {
+      color: colors.muted,
+      fontSize: 12,
+      marginTop: 3,
+    },
+    latestAction: {
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.sm,
+      paddingVertical: spacing.sm,
+    },
+    latestActionText: {
+      color: colors.brand,
+      fontSize: 12,
+      fontWeight: typography.weight.black,
+    },
+    latestRow: {
+      alignItems: 'center',
+      borderTopColor: colors.borderSoft,
+      borderTopWidth: 1,
+      flexDirection: 'row',
+      gap: spacing.md,
+      paddingVertical: spacing.md,
+    },
+    latestRowCopy: {
+      flex: 1,
+    },
+    latestName: {
+      color: colors.text,
+      fontSize: 14,
+      fontWeight: typography.weight.black,
+    },
+    latestMeta: {
+      color: colors.muted,
+      fontSize: 12,
+      marginTop: 4,
+    },
+    latestAmountWrap: {
+      alignItems: 'flex-end',
+    },
+    latestAmount: {
+      color: colors.success,
+      fontSize: 14,
+      fontWeight: typography.weight.black,
+    },
+    latestStatus: {
+      color: colors.muted,
+      fontSize: 10,
+      fontWeight: typography.weight.bold,
+      marginTop: 3,
+      textTransform: 'uppercase',
+    },
+    latestEmpty: {
+      color: colors.muted,
+      fontSize: 13,
+      paddingTop: spacing.md,
     },
     filterRail: {
       flexDirection: 'row',

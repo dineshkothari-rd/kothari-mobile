@@ -4,6 +4,7 @@ export type FirestoreRecord = {
 };
 
 export type TenantRecord = FirestoreRecord & {
+  additionalGuests?: string[];
   businessType?: string;
   documentId?: string;
   fullName?: string;
@@ -23,6 +24,19 @@ export type TenantRecord = FirestoreRecord & {
   roomType?: string;
   services?: string[];
   status?: string;
+  checkedOutAt?: {
+    seconds?: number;
+    toDate?: () => Date;
+  };
+  checkedInAt?: {
+    seconds?: number;
+    toDate?: () => Date;
+  };
+  checkInDate?: string;
+  checkOutDate?: string;
+  checkoutDate?: string;
+  checkoutTime?: string;
+  endDate?: string;
   tenantName?: string;
 };
 
@@ -40,6 +54,17 @@ export type PaymentRecord = FirestoreRecord & {
   tenantRoom?: string;
   totalRent?: number | string;
   userId?: string;
+  createdAt?: {
+    seconds?: number;
+    toDate?: () => Date;
+  };
+  updatedAt?: {
+    seconds?: number;
+    toDate?: () => Date;
+  };
+  date?: string;
+  note?: string;
+  businessType?: string;
 };
 
 export type ExpenseRecord = FirestoreRecord & {

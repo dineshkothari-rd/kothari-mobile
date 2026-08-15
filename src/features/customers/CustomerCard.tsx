@@ -13,17 +13,24 @@ type CustomerCardProps = {
   expanded: boolean;
   onDelete?: () => void;
   onEdit?: () => void;
+  onCheckOut?: () => void;
+  checkingOut?: boolean;
+  onCheckIn?: () => void;
+  checkingIn?: boolean;
   onToggle: () => void;
   onViewIdProof?: () => void;
 };
 
-export function CustomerCard({ customer, deleting = false, expanded, onDelete, onEdit, onToggle, onViewIdProof }: CustomerCardProps) {
+export function CustomerCard({ customer, checkingIn = false, checkingOut = false, deleting = false, expanded, onCheckIn, onCheckOut, onDelete, onEdit, onToggle, onViewIdProof }: CustomerCardProps) {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
   const styles = createStyles(colors);
   const businessType = getBusinessType(customer.businessType);
   const services = Array.isArray(customer.services) ? customer.services : [];
+  const additionalGuests = Array.isArray(customer.additionalGuests) ? customer.additionalGuests.filter(Boolean) : [];
   const status = getCustomerStatus(customer);
+  const canCheckIn = customer.businessType === 'hotel' && status === 'booked';
+  const canCheckOut = customer.businessType === 'hotel' && ['checked in', 'occupied', 'active'].includes(status);
   const snapshotTitle = customer.businessType === 'library'
     ? 'Membership snapshot'
     : customer.businessType === 'hotel'
@@ -66,6 +73,15 @@ export function CustomerCard({ customer, deleting = false, expanded, onDelete, o
         </View>
       ) : null}
 
+      {customer.businessType === 'hotel' && additionalGuests.length ? (
+        <View style={styles.additionalGuestsBox}>
+          <Text style={styles.additionalGuestsLabel}>{t('Additional hotel guests')}</Text>
+          {additionalGuests.map((guest, index) => (
+            <Text key={`${guest}-${index}`} style={styles.additionalGuestName}>{index + 2}. {guest}</Text>
+          ))}
+        </View>
+      ) : null}
+
       {customer.idProof ? (
         <Pressable disabled={!onViewIdProof} onPress={onViewIdProof}>
           <Text style={styles.proofText}>{t('ID proof attached')}{customer.idProofName ? ` - ${customer.idProofName}` : ''}</Text>
@@ -83,6 +99,16 @@ export function CustomerCard({ customer, deleting = false, expanded, onDelete, o
             {services.length ? `${services.join(', ')} ${t('included.')}` : t('No services added yet.')}
           </Text>
           <View style={styles.expandedActions}>
+            {canCheckIn && onCheckIn ? (
+              <Pressable accessibilityRole="button" disabled={checkingIn} onPress={onCheckIn} style={styles.expandedAction}>
+                <Text style={styles.expandedActionText}>{t(checkingIn ? 'Checking in...' : 'Check in')}</Text>
+              </Pressable>
+            ) : null}
+            {canCheckOut && onCheckOut ? (
+              <Pressable accessibilityRole="button" disabled={checkingOut} onPress={onCheckOut} style={styles.expandedAction}>
+                <Text style={styles.expandedActionText}>{t(checkingOut ? 'Checking out...' : 'Check out')}</Text>
+              </Pressable>
+            ) : null}
             <Pressable accessibilityRole="button" disabled={!customer.phone} onPress={callCustomer} style={styles.expandedAction}>
               <Text style={styles.expandedActionText}>{t('Call')}</Text>
             </Pressable>
@@ -222,6 +248,25 @@ function createStyles(colors: AppColors) {
     flexWrap: 'wrap',
     gap: spacing.sm,
     marginTop: spacing.md,
+  },
+  additionalGuestsBox: {
+    backgroundColor: colors.surfaceMuted,
+    borderRadius: radius.md,
+    marginTop: spacing.md,
+    padding: spacing.md,
+  },
+  additionalGuestsLabel: {
+    color: colors.muted,
+    fontSize: 11,
+    fontWeight: typography.weight.black,
+    marginBottom: spacing.xs,
+    textTransform: 'uppercase',
+  },
+  additionalGuestName: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: typography.weight.bold,
+    marginTop: 3,
   },
   service: {
     backgroundColor: colors.accentSoft,

@@ -17,7 +17,7 @@ export function getCustomerName(customer: TenantRecord) {
 }
 
 export function getCustomerStatus(customer: TenantRecord) {
-  return String(customer.status || 'active').toLowerCase();
+  return String(customer.status || 'active').trim().toLowerCase();
 }
 
 export function matchesCustomerSearch(customer: TenantRecord, search: string) {

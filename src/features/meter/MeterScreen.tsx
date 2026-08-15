@@ -17,10 +17,12 @@ import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from
 import { db } from '../../lib/firebase/client';
 import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
+import { useRealtimeClock } from '../../shared/hooks/useRealtimeClock';
 import type { MeterReadingRecord, TenantRecord } from '../../shared/types/records';
 import { money, toNumber } from '../../shared/utils/money';
 import { FilterPill } from '../customers/FilterPill';
-import { getCustomerAllocationLabel, getCustomerStatus } from '../customers/customerUtils';
+import { getCustomerAllocationLabel } from '../customers/customerUtils';
+import { isRoomCustomer } from '../customers/roomUtils';
 import { getMonthKey } from '../operations/operationsMath';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
@@ -43,11 +45,8 @@ function getTenantName(tenant: TenantRecord) {
   return tenant.name || tenant.fullName || tenant.tenantName || 'Unnamed';
 }
 
-function isMeterCustomer(tenant: TenantRecord) {
-  const businessType = String(tenant.businessType || 'pg');
-  const activeStatuses = ['active', 'booked', 'checked in', 'occupied'];
-
-  return ['pg', 'hotel'].includes(businessType) && activeStatuses.includes(getCustomerStatus(tenant)) && Boolean(tenant.room);
+function isMeterCustomer(tenant: TenantRecord, now: number) {
+  return isRoomCustomer(tenant, now);
 }
 
 function matchesSearch(reading: MeterReadingRecord, search: string) {
@@ -78,9 +77,10 @@ export function MeterScreen() {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState('');
   const [actionError, setActionError] = useState('');
+  const now = useRealtimeClock();
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
   const readings = useFirestoreCollection<MeterReadingRecord>('meterReadings', { sortBy: 'createdAt' });
-  const meterCustomers = useMemo(() => tenants.data.filter(isMeterCustomer), [tenants.data]);
+  const meterCustomers = useMemo(() => tenants.data.filter((tenant) => isMeterCustomer(tenant, now)), [now, tenants.data]);
   const filtered = useMemo(
     () =>
       readings.data.filter((reading) => {

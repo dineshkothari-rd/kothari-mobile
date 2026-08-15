@@ -20,6 +20,7 @@ import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from
 import { db } from '../../lib/firebase/client';
 import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
+import { useRealtimeClock } from '../../shared/hooks/useRealtimeClock';
 import type { TenantRecord } from '../../shared/types/records';
 import { toNumber } from '../../shared/utils/money';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
@@ -27,9 +28,10 @@ import { businessTypeOptions, getBusinessType } from './businessTypes';
 import { CustomerCard } from './CustomerCard';
 import { customerStatusOptions, getCustomerStatus, matchesCustomerSearch } from './customerUtils';
 import { FilterPill } from './FilterPill';
-import { getRoomOccupancy, getRoomSummary, parseRoomLabel, roomNumbers } from './roomUtils';
+import { getRoomOccupancy, getRoomSummary, isRoomCustomer, parseRoomLabel, roomNumbers } from './roomUtils';
 
 type CustomerDraft = {
+  additionalGuests: string[];
   businessType: string;
   documentId: string;
   email: string;
@@ -51,6 +53,7 @@ type CustomerDraft = {
 };
 
 const initialForm = {
+  additionalGuests: [] as string[],
   businessType: 'pg',
   documentId: '',
   email: '',
@@ -78,6 +81,7 @@ export function CustomersScreen() {
   const { t } = useLanguage();
   const styles = createStyles(colors);
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
+  const now = useRealtimeClock();
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -88,10 +92,12 @@ export function CustomersScreen() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState('');
+  const [checkingOutId, setCheckingOutId] = useState('');
+  const [checkingInId, setCheckingInId] = useState('');
   const [actionError, setActionError] = useState('');
   const [viewingProof, setViewingProof] = useState<TenantRecord | null>(null);
-  const roomSummary = getRoomSummary(tenants.data);
-  const roomOccupancy = getRoomOccupancy(tenants.data);
+  const roomSummary = getRoomSummary(tenants.data, now);
+  const roomOccupancy = getRoomOccupancy(tenants.data, now);
   const filtered = useMemo(
     () =>
       tenants.data.filter((tenant) => {
@@ -130,14 +136,34 @@ export function CustomersScreen() {
     setActionError('');
 
     try {
+      const previousStatus = editingCustomer ? getCustomerStatus(editingCustomer) : '';
+      const now = new Date();
+      const localDate = getLocalDate(now);
+      const localTime = now.toTimeString().slice(0, 5);
+      const lifecycleFields = payload.status === 'checked out' && previousStatus !== 'checked out'
+        ? {
+            checkedOutAt: serverTimestamp(),
+            moveOutDate: payload.moveOutDate || localDate,
+            moveOutTime: payload.moveOutTime || localTime,
+          }
+        : payload.status === 'checked in' && previousStatus !== 'checked in'
+          ? {
+              checkedInAt: serverTimestamp(),
+              moveInDate: payload.moveInDate || localDate,
+              moveInTime: payload.moveInTime || localTime,
+            }
+          : {};
+
       if (editingCustomer) {
         await updateDoc(doc(db, 'tenants', editingCustomer.id), {
           ...payload,
+          ...lifecycleFields,
           updatedAt: serverTimestamp(),
         });
       } else {
         await addDoc(collection(db, 'tenants'), {
           ...payload,
+          ...lifecycleFields,
           createdAt: serverTimestamp(),
           idProof: payload.idProof || null,
           idProofName: payload.idProofName || null,
@@ -175,12 +201,78 @@ export function CustomersScreen() {
     ]);
   }
 
+  async function checkOutCustomer(customer: TenantRecord) {
+    setCheckingOutId(customer.id);
+    setActionError('');
+
+    try {
+      const now = new Date();
+      const localDate = getLocalDate(now);
+
+      await updateDoc(doc(db, 'tenants', customer.id), {
+        checkedOutAt: serverTimestamp(),
+        moveOutDate: localDate,
+        moveOutTime: now.toTimeString().slice(0, 5),
+        status: 'checked out',
+        updatedAt: serverTimestamp(),
+      });
+    } catch (checkoutError) {
+      setActionError(checkoutError instanceof Error ? checkoutError.message : t('Could not check out customer.'));
+    } finally {
+      setCheckingOutId('');
+    }
+  }
+
+  async function checkInCustomer(customer: TenantRecord) {
+    setCheckingInId(customer.id);
+    setActionError('');
+
+    try {
+      const now = new Date();
+
+      await updateDoc(doc(db, 'tenants', customer.id), {
+        checkedInAt: serverTimestamp(),
+        moveInDate: getLocalDate(now),
+        moveInTime: now.toTimeString().slice(0, 5),
+        status: 'checked in',
+        updatedAt: serverTimestamp(),
+      });
+    } catch (checkinError) {
+      setActionError(checkinError instanceof Error ? checkinError.message : t('Could not check in customer.'));
+    } finally {
+      setCheckingInId('');
+    }
+  }
+
+  function confirmCheckIn(customer: TenantRecord) {
+    Alert.alert(
+      t('Check in customer?'),
+      `${customer.name || t('This customer')} ${t('will be checked in to the assigned room.')}`,
+      [
+        { text: t('Cancel'), style: 'cancel' },
+        { text: t('Check in'), onPress: () => checkInCustomer(customer) },
+      ],
+    );
+  }
+
+  function confirmCheckOut(customer: TenantRecord) {
+    Alert.alert(
+      t('Check out customer?'),
+      `${customer.name || t('This customer')} ${t('will be checked out and the room will become available.')}`,
+      [
+        { text: t('Cancel'), style: 'cancel' },
+        { text: t('Check out'), onPress: () => checkOutCustomer(customer) },
+      ],
+    );
+  }
+
   return (
     <View>
       {showForm ? (
         <CustomerFormSheet
           customer={editingCustomer}
           customers={tenants.data}
+          now={now}
           onClose={() => {
             setShowForm(false);
             setEditingCustomer(null);
@@ -236,7 +328,13 @@ export function CustomersScreen() {
           >
             <Text style={[styles.roomNumber, room.status === 'Full' && styles.roomTextFull]}>{t('Room')} {room.room}</Text>
             <Text style={[styles.roomStatus, room.status === 'Full' && styles.roomStatusFull]}>{t(room.status)}</Text>
-            <Text style={[styles.roomMeta, room.status === 'Full' && styles.roomMetaFull]}>{room.occupants.length} {t(room.occupants.length === 1 ? 'guest' : 'guests')}</Text>
+            <Text style={[styles.roomMeta, room.status === 'Full' && styles.roomMetaFull]}>
+              {room.businessType === 'hotel'
+                ? `${t('Hotel')} / ${room.guestCount} ${t(room.guestCount === 1 ? 'guest' : 'guests')}`
+                : room.businessType === 'pg'
+                  ? `${t('PG')} / ${room.occupants.length}/${room.capacity}`
+                  : t('Available for PG or Hotel')}
+            </Text>
           </Pressable>
         ))}
       </ScrollView>
@@ -295,12 +393,16 @@ export function CustomersScreen() {
         {filtered.length ? (
           filtered.slice(0, 40).map((tenant) => (
             <CustomerCard
+              checkingIn={checkingInId === tenant.id}
+              checkingOut={checkingOutId === tenant.id}
               customer={tenant}
               deleting={deletingId === tenant.id}
               expanded={selectedCustomerId === tenant.id}
               key={tenant.id}
               onDelete={() => confirmDelete(tenant)}
               onEdit={() => openEditForm(tenant)}
+              onCheckIn={() => confirmCheckIn(tenant)}
+              onCheckOut={() => confirmCheckOut(tenant)}
               onToggle={() => setSelectedCustomerId((current) => current === tenant.id ? '' : tenant.id)}
               onViewIdProof={() => setViewingProof(tenant)}
             />
@@ -318,6 +420,10 @@ export function CustomersScreen() {
       ) : null}
     </View>
   );
+}
+
+function getLocalDate(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 function SummaryTile({
@@ -369,6 +475,7 @@ function getAllocationKey(value: unknown, businessType: string) {
 function CustomerFormSheet({
   customer,
   customers,
+  now,
   onClose,
   onSubmit,
   saving,
@@ -376,6 +483,7 @@ function CustomerFormSheet({
 }: {
   customer: TenantRecord | null;
   customers: TenantRecord[];
+  now: number;
   onClose: () => void;
   onSubmit: (payload: CustomerDraft) => void;
   saving: boolean;
@@ -384,6 +492,7 @@ function CustomerFormSheet({
   const { t } = useLanguage();
   const [form, setForm] = useState(() => ({
     ...initialForm,
+    additionalGuests: Array.isArray(customer?.additionalGuests) ? customer.additionalGuests : [],
     businessType: customer?.businessType || initialForm.businessType,
     documentId: customer?.documentId || '',
     email: customer?.email || '',
@@ -414,16 +523,22 @@ function CustomerFormSheet({
       ? itemType === 'library'
       : ['pg', 'hotel'].includes(itemType);
 
-    return item.id !== customer?.id && sameInventory && activeAllocationStatuses.includes(getCustomerStatus(item));
+    const activelyAllocated = form.businessType === 'library'
+      ? activeAllocationStatuses.includes(getCustomerStatus(item))
+      : isRoomCustomer(item, now);
+
+    return item.id !== customer?.id && sameInventory && activelyAllocated;
   });
   const availableAllocationOptions = allocationNumbers
     .map((allocation) => {
       const occupants = allocationOccupants.filter((item) => getAllocationKey(item.room, form.businessType) === allocation);
       const isCurrent = currentAllocation === allocation;
-      const vacantSeats = Math.max(0, activeType.allocationCapacity - occupants.length);
+      const hasConflictingBusiness = occupants.some((item) => String(item.businessType || 'pg') !== form.businessType);
+      const vacantSeats = hasConflictingBusiness ? 0 : Math.max(0, activeType.allocationCapacity - occupants.length);
 
       return {
         allocation,
+        hasConflictingBusiness,
         occupants,
         isCurrent,
         vacantSeats,
@@ -435,7 +550,13 @@ function CustomerFormSheet({
     ? allocationOccupants.filter((item) => getAllocationKey(item.room, form.businessType) === selectedAllocation)
     : [];
   const selectedAllocationOpenSpots = Math.max(0, activeType.allocationCapacity - selectedAllocationOccupants.length);
+  const selectedRoomHasConflictingBusiness = form.businessType !== 'library' && selectedAllocationOccupants.some(
+    (item) => String(item.businessType || 'pg') !== form.businessType,
+  );
   const selectedAllocationIsCurrent = Boolean(selectedAllocation && currentAllocation === selectedAllocation);
+  const selectedRoomAvailable = form.businessType === 'library'
+    || selectedAllocationIsCurrent
+    || (!selectedRoomHasConflictingBusiness && selectedAllocationOpenSpots > 0);
   const librarySeatAvailable = form.businessType !== 'library' || selectedAllocationIsCurrent || selectedAllocationOpenSpots > 0;
   const librarySeatLooksValid = form.businessType !== 'library' || !selectedAllocation || /^[A-Z]\d{2,3}$/.test(selectedAllocation);
   const canContinueAllocation = Boolean(form.name.trim() && form.phone.trim() && form.room.trim() && toNumber(form.rent));
@@ -461,6 +582,7 @@ function CustomerFormSheet({
       room: '',
       roomType: 'single',
       services: current.services.filter((service) => nextType.services.includes(service)),
+      additionalGuests: type === 'hotel' ? current.additionalGuests : [],
       status: nextStatus,
     }));
     setFormError('');
@@ -487,6 +609,12 @@ function CustomerFormSheet({
     if (nextStep === 'details' && !librarySeatAvailable) {
       setFormStep('allocation');
       setFormError(`${t(activeType.unitLabel)} ${selectedAllocation} ${t('is already assigned. Choose another seat.')}`);
+      return;
+    }
+
+    if (nextStep === 'details' && !selectedRoomAvailable) {
+      setFormStep('allocation');
+      setFormError(t('This room is already assigned to the other business. Choose another room.'));
       return;
     }
 
@@ -517,6 +645,11 @@ function CustomerFormSheet({
         return;
       }
 
+      if (!selectedRoomAvailable) {
+        setFormError(t('This room is already assigned to the other business. Choose another room.'));
+        return;
+      }
+
       setFormStep('details');
       setFormError('');
     }
@@ -539,6 +672,24 @@ function CustomerFormSheet({
       services: current.services.includes(service)
         ? current.services.filter((item) => item !== service)
         : [...current.services, service],
+    }));
+  }
+
+  function addHotelGuest() {
+    setForm((current) => ({ ...current, additionalGuests: [...current.additionalGuests, ''] }));
+  }
+
+  function updateHotelGuest(index: number, value: string) {
+    setForm((current) => ({
+      ...current,
+      additionalGuests: current.additionalGuests.map((guest, guestIndex) => guestIndex === index ? value : guest),
+    }));
+  }
+
+  function removeHotelGuest(index: number) {
+    setForm((current) => ({
+      ...current,
+      additionalGuests: current.additionalGuests.filter((_, guestIndex) => guestIndex !== index),
     }));
   }
 
@@ -612,7 +763,16 @@ function CustomerFormSheet({
       return;
     }
 
+    if (!selectedRoomAvailable) {
+      setFormStep('allocation');
+      setFormError(t('This room is already assigned to the other business. Choose another room.'));
+      return;
+    }
+
     onSubmit({
+      additionalGuests: form.businessType === 'hotel'
+        ? form.additionalGuests.map((guest) => guest.trim()).filter(Boolean)
+        : [],
       businessType: form.businessType,
       documentId: form.documentId.trim(),
       email: form.email.trim(),
@@ -694,6 +854,36 @@ function CustomerFormSheet({
                   <TextField label={`${activeType.customerLabel} name`} onChangeText={(value) => updateField('name', value)} placeholder="Full name" value={form.name} />
                   <TextField keyboardType="phone-pad" label="Phone" onChangeText={(value) => updateField('phone', value)} placeholder="Phone number" value={form.phone} />
                 </View>
+
+                {form.businessType === 'hotel' ? (
+                  <View style={styles.hotelGuestsSection}>
+                    <View style={styles.hotelGuestsHeader}>
+                      <View style={styles.hotelGuestsCopy}>
+                        <Text style={styles.formLabel}>{t('Additional hotel guests')}</Text>
+                        <Text style={styles.inlineHelp}>{t('These names stay under the same booking and do not consume another room.')}</Text>
+                      </View>
+                      <Pressable accessibilityRole="button" onPress={addHotelGuest} style={styles.addGuestButton}>
+                        <Text style={styles.addGuestButtonText}>{t('Add guest')}</Text>
+                      </Pressable>
+                    </View>
+                    {form.additionalGuests.map((guest, index) => (
+                      <View key={`hotel-guest-${index}`} style={styles.hotelGuestRow}>
+                        <View style={styles.hotelGuestField}>
+                          <TextField
+                            autoCapitalize="words"
+                            label={`${t('Guest')} ${index + 2}`}
+                            onChangeText={(value) => updateHotelGuest(index, value)}
+                            placeholder="Full name"
+                            value={guest}
+                          />
+                        </View>
+                        <Pressable accessibilityRole="button" onPress={() => removeHotelGuest(index)} style={styles.removeGuestButton}>
+                          <Text style={styles.removeGuestButtonText}>{t('Remove')}</Text>
+                        </Pressable>
+                      </View>
+                    ))}
+                  </View>
+                ) : null}
 
                 <Text style={styles.formLabel}>{t(activeType.unitLabel)}</Text>
                 <View style={styles.roomPickerHeader}>
@@ -1386,6 +1576,51 @@ function createStyles(colors: AppColors) {
   formGrid: {
     gap: spacing.md,
     marginTop: spacing.lg,
+  },
+  hotelGuestsSection: {
+    marginTop: spacing.lg,
+  },
+  hotelGuestsHeader: {
+    alignItems: 'flex-end',
+    flexDirection: 'row',
+    gap: spacing.md,
+    justifyContent: 'space-between',
+  },
+  hotelGuestsCopy: {
+    flex: 1,
+  },
+  addGuestButton: {
+    backgroundColor: colors.ink,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  addGuestButtonText: {
+    color: colors.onBrand,
+    fontSize: 12,
+    fontWeight: typography.weight.black,
+  },
+  hotelGuestRow: {
+    alignItems: 'flex-end',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  hotelGuestField: {
+    flex: 1,
+  },
+  removeGuestButton: {
+    alignItems: 'center',
+    backgroundColor: colors.dangerSoft,
+    borderRadius: radius.md,
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+  },
+  removeGuestButtonText: {
+    color: colors.danger,
+    fontSize: 12,
+    fontWeight: typography.weight.black,
   },
   sheetActions: {
     flexDirection: 'row',
