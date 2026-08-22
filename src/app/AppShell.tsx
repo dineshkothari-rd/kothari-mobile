@@ -1,8 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
 import * as SystemUI from 'expo-system-ui';
-import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { firebaseConfigStatus } from '../config/firebaseConfig';
 import { SignInScreen } from '../features/auth/SignInScreen';
@@ -45,15 +45,92 @@ function AppShellContent() {
           <CheckingScreen styles={styles} colors={colors} />
         ) : session.profile && (session.profile.accessStatus === 'suspended' || session.profile.accessStatus === 'revoked') ? (
           <AccountAccessScreen accessStatus={session.profile.accessStatus} onSignOut={session.signOut} />
+        ) : session.profile && !session.profile.emailVerified ? (
+          <EmailVerificationScreen
+            email={session.profile.email}
+            onRefresh={session.refreshProfile}
+            onSend={session.sendAccountVerification}
+            onSignOut={session.signOut}
+          />
         ) : session.profile?.role === 'customer' ? (
           <CustomerWorkspaceScreen onSignOut={session.signOut} profile={session.profile} />
         ) : session.profile ? (
           <WorkspaceScreen admin={session.profile} onSignOut={session.signOut} />
         ) : (
-          <SignInScreen error={session.error} loading={session.submitting} onSignIn={session.signIn} />
+          <SignInScreen error={session.error} loading={session.submitting} onForgotPassword={session.requestPasswordReset} onSignIn={session.signIn} />
         )}
       </View>
     </AppErrorBoundary>
+  );
+}
+
+function EmailVerificationScreen({ email, onRefresh, onSend, onSignOut }: {
+  email: string;
+  onRefresh: () => Promise<boolean>;
+  onSend: () => Promise<void>;
+  onSignOut: () => void;
+}) {
+  const { colors } = useAppTheme();
+  const { t } = useLanguage();
+  const styles = createStyles(colors);
+  const sent = useRef(false);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+
+  async function sendVerification() {
+    setBusy(true);
+    setMessage('');
+    try {
+      await onSend();
+      setMessage(t('Verification email sent. Check your inbox.'));
+    } catch (sendError) {
+      setMessage(sendError instanceof Error ? sendError.message : t('Could not send verification email.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function refresh() {
+    setBusy(true);
+    setMessage('');
+    try {
+      if (!await onRefresh()) setMessage(t('Email is not verified yet.'));
+    } catch (refreshError) {
+      setMessage(refreshError instanceof Error ? refreshError.message : t('Could not refresh account access. Please try again.'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    if (sent.current) return;
+    sent.current = true;
+    sendVerification();
+  }, []);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') onRefresh().catch(() => undefined);
+    });
+    return () => subscription.remove();
+  }, [onRefresh]);
+
+  return (
+    <View style={styles.centered}>
+      <View style={styles.brandMark}><Text style={styles.brandMarkText}>@</Text></View>
+      <Text style={styles.centerTitle}>{t('Verify your email')}</Text>
+      <Text style={styles.centerText}>{t('We sent a verification link to')} {email}.</Text>
+      {message ? <Text accessibilityLiveRegion="polite" style={styles.verificationMessage}>{message}</Text> : null}
+      <Pressable accessibilityRole="button" disabled={busy} onPress={refresh} style={styles.signOutButton}>
+        <Text style={styles.signOutText}>{t(busy ? 'Checking...' : "I've verified my email")}</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" disabled={busy} onPress={sendVerification} style={styles.secondaryButton}>
+        <Text style={styles.secondaryButtonText}>{t('Resend verification email')}</Text>
+      </Pressable>
+      <Pressable accessibilityRole="button" disabled={busy} onPress={onSignOut} style={styles.secondaryButton}>
+        <Text style={styles.secondaryButtonText}>{t('Logout')}</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -176,6 +253,22 @@ function createStyles(colors: AppColors) {
     color: colors.onBrand,
     fontSize: 13,
     fontWeight: typography.weight.black,
+  },
+  secondaryButton: {
+    marginTop: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  secondaryButtonText: {
+    color: colors.brand,
+    fontSize: 13,
+    fontWeight: typography.weight.black,
+  },
+  verificationMessage: {
+    color: colors.muted,
+    fontSize: 13,
+    marginTop: spacing.md,
+    textAlign: 'center',
   },
   });
 }

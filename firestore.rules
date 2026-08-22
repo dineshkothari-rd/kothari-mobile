@@ -25,11 +25,14 @@ service cloud.firestore {
     }
 
     function admin() {
-      return signedIn() && (role() == 'admin' || legacyAdmin());
+      return signedIn()
+        && request.auth.token.email_verified == true
+        && (role() == 'admin' || legacyAdmin());
     }
 
     function staffAccessAllowed() {
       return role() == 'staff'
+        && request.auth.token.email_verified == true
         && get(/databases/$(database)/documents/users/$(request.auth.uid))
           .data.get('accessStatus', 'active') in ['active', 'invited'];
     }
@@ -44,6 +47,7 @@ service cloud.firestore {
 
     function customerAccessAllowed() {
       return customer()
+        && request.auth.token.email_verified == true
         && get(/databases/$(database)/documents/users/$(request.auth.uid))
           .data.get('accessStatus', 'invited') in ['active', 'invited'];
     }
@@ -56,6 +60,7 @@ service cloud.firestore {
 
     function customerActivatingUser(userId) {
       return signedIn()
+        && request.auth.token.email_verified == true
         && request.auth.uid == userId
         && resource.data.role == 'customer'
         && resource.data.get('accessStatus', 'invited') == 'invited'
@@ -68,6 +73,7 @@ service cloud.firestore {
 
     function staffActivatingUser(userId) {
       return signedIn()
+        && request.auth.token.email_verified == true
         && request.auth.uid == userId
         && resource.data.role == 'staff'
         && resource.data.accessStatus == 'invited'

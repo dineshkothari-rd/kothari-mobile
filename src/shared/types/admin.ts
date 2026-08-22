@@ -4,6 +4,7 @@ export type AccountAccessStatus = 'active' | 'invited' | 'revoked' | 'suspended'
 type BaseProfile = {
   customerId?: string;
   email: string;
+  emailVerified: boolean;
   name: string;
   uid: string;
 };

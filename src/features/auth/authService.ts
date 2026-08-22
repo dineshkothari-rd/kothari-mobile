@@ -1,4 +1,4 @@
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from 'firebase/auth';
+import { onAuthStateChanged, reload, sendEmailVerification, sendPasswordResetEmail, signInWithEmailAndPassword, signOut, type User } from 'firebase/auth';
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 
 import { auth, db } from '../../lib/firebase/client';
@@ -34,6 +34,7 @@ export async function getAppProfile(user: User | null): Promise<AppProfile | nul
 
     const base = {
       email: user.email,
+      emailVerified: user.emailVerified,
       name: String(data?.name || user.displayName || user.email),
       uid: user.uid,
     };
@@ -55,6 +56,7 @@ export async function getAppProfile(user: User | null): Promise<AppProfile | nul
 
   return {
     email: user.email,
+    emailVerified: user.emailVerified,
     accessStatus: 'active',
     name: String(adminSnap.data().name || user.email),
     role: 'admin',
@@ -76,4 +78,27 @@ export async function signInAccount(email: string, password: string) {
 
 export async function signOutAccount() {
   await signOut(auth);
+}
+
+export async function requestPasswordReset(email: string) {
+  try {
+    await sendPasswordResetEmail(auth, email.trim().toLowerCase());
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'auth/user-not-found') return;
+    throw error;
+  }
+}
+
+export async function sendAccountVerification() {
+  const user = auth.currentUser;
+  if (!user) throw new Error('Please sign in again.');
+  if (!user.emailVerified) await sendEmailVerification(user);
+}
+
+export async function refreshSignedInProfile() {
+  const user = auth.currentUser;
+  if (!user) return null;
+  await reload(user);
+  await user.getIdToken(true);
+  return getAppProfile(user);
 }

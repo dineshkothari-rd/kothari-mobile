@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { AppProfile } from '../../shared/types/admin';
-import { getAppProfile, signInAccount, signOutAccount, watchAppProfile, watchAuthState } from './authService';
+import { getAppProfile, refreshSignedInProfile, requestPasswordReset, sendAccountVerification, signInAccount, signOutAccount, watchAppProfile, watchAuthState } from './authService';
 
 type SessionStatus = 'checking' | 'signedOut' | 'signedIn';
 
@@ -92,16 +92,25 @@ export function useAppSession() {
     }
   }, []);
 
+  const refreshProfile = useCallback(async () => {
+    const nextProfile = await refreshSignedInProfile();
+    if (nextProfile) setProfile(nextProfile);
+    return Boolean(nextProfile?.emailVerified);
+  }, []);
+
   return useMemo(
     () => ({
       profile,
       error,
+      refreshProfile,
+      requestPasswordReset,
+      sendAccountVerification,
       setError,
       signIn,
       signOut,
       status,
       submitting,
     }),
-    [error, profile, signIn, signOut, status, submitting],
+    [error, profile, refreshProfile, signIn, signOut, status, submitting],
   );
 }
