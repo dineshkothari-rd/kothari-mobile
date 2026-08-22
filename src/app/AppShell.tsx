@@ -14,50 +14,66 @@ import { AppThemeProvider, radius, spacing, typography, useAppTheme, type AppCol
 import { LanguageProvider, useLanguage } from '../shared/i18n/LanguageProvider';
 
 export function AppShell() {
+  return (
+    <AppThemeProvider>
+      <LanguageProvider>
+        <AppShellRoot />
+      </LanguageProvider>
+    </AppThemeProvider>
+  );
+}
+
+function AppShellRoot() {
+  const session = useAppSession();
   const [splashVisible, setSplashVisible] = useState(true);
   const finishSplash = useCallback(() => setSplashVisible(false), []);
 
   return (
     <View style={splashStyles.app}>
-      <AppThemeProvider>
-        <LanguageProvider>
-          <AppShellContent />
-        </LanguageProvider>
-      </AppThemeProvider>
-      {splashVisible ? <AnimatedSplash onFinish={finishSplash} /> : null}
+      <AppShellContent session={session} />
+      {splashVisible ? <AnimatedSplash onFinish={finishSplash} ready={session.status !== 'checking'} /> : null}
     </View>
   );
 }
 
-function AnimatedSplash({ onFinish }: { onFinish: () => void }) {
+function AnimatedSplash({ onFinish, ready }: { onFinish: () => void; ready: boolean }) {
   const entrance = useRef(new Animated.Value(0)).current;
   const copy = useRef(new Animated.Value(0)).current;
   const progress = useRef(new Animated.Value(0)).current;
   const exit = useRef(new Animated.Value(1)).current;
+  const [introFinished, setIntroFinished] = useState(false);
 
   useEffect(() => {
+    const animation = Animated.parallel([
+      Animated.spring(entrance, {
+        friction: 7,
+        tension: 65,
+        toValue: 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(copy, {
+        delay: 140,
+        duration: 420,
+        easing: Easing.out(Easing.cubic),
+        toValue: 1,
+        useNativeDriver: true,
+      }),
+      Animated.timing(progress, {
+        duration: 850,
+        easing: Easing.inOut(Easing.cubic),
+        toValue: 1,
+        useNativeDriver: true,
+      }),
+    ]);
+
+    animation.start(({ finished }) => setIntroFinished(finished));
+    return () => animation.stop();
+  }, [copy, entrance, progress]);
+
+  useEffect(() => {
+    if (!introFinished || !ready) return;
+
     const animation = Animated.sequence([
-      Animated.parallel([
-        Animated.spring(entrance, {
-          friction: 7,
-          tension: 65,
-          toValue: 1,
-          useNativeDriver: true,
-        }),
-        Animated.timing(copy, {
-          delay: 140,
-          duration: 420,
-          easing: Easing.out(Easing.cubic),
-          toValue: 1,
-          useNativeDriver: true,
-        }),
-        Animated.timing(progress, {
-          duration: 850,
-          easing: Easing.inOut(Easing.cubic),
-          toValue: 1,
-          useNativeDriver: true,
-        }),
-      ]),
       Animated.delay(250),
       Animated.timing(exit, {
         duration: 280,
@@ -71,7 +87,7 @@ function AnimatedSplash({ onFinish }: { onFinish: () => void }) {
       if (finished) onFinish();
     });
     return () => animation.stop();
-  }, [copy, entrance, exit, onFinish, progress]);
+  }, [exit, introFinished, onFinish, ready]);
 
   return (
     <Animated.View
@@ -80,11 +96,9 @@ function AnimatedSplash({ onFinish }: { onFinish: () => void }) {
       style={[splashStyles.overlay, { opacity: exit }]}
     >
       <StatusBar style="light" />
-      <Animated.Image
-        resizeMode="contain"
-        source={require('../../assets/splash-icon.png')}
+      <Animated.View
         style={[
-          splashStyles.logo,
+          splashStyles.logoScene,
           {
             opacity: entrance,
             transform: [
@@ -93,7 +107,18 @@ function AnimatedSplash({ onFinish }: { onFinish: () => void }) {
             ],
           },
         ]}
-      />
+      >
+        <View style={splashStyles.haloOuter} />
+        <View style={splashStyles.haloInner} />
+        <View style={[splashStyles.spark, splashStyles.sparkTop]} />
+        <View style={[splashStyles.spark, splashStyles.sparkBottom]} />
+        <View style={splashStyles.logo}>
+          <View style={splashStyles.logoInset}>
+            <Text style={splashStyles.logoText}>K</Text>
+          </View>
+          <View style={splashStyles.logoAccent} />
+        </View>
+      </Animated.View>
       <Animated.View
         style={{
           alignItems: 'center',
@@ -101,8 +126,9 @@ function AnimatedSplash({ onFinish }: { onFinish: () => void }) {
           transform: [{ translateY: copy.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
         }}
       >
-        <Text style={splashStyles.title}>KOTHARI</Text>
-        <Text style={splashStyles.subtitle}>STAYS · SPACES · SIMPLIFIED</Text>
+        <Text style={splashStyles.eyebrow}>KOTHARI</Text>
+        <Text style={splashStyles.title}>Your spaces, made simple.</Text>
+        <Text style={splashStyles.subtitle}>PG · HOTEL · LIBRARY</Text>
       </Animated.View>
       <View style={splashStyles.track}>
         <Animated.View style={[splashStyles.progress, { transform: [{ scaleX: progress }] }]} />
@@ -111,8 +137,7 @@ function AnimatedSplash({ onFinish }: { onFinish: () => void }) {
   );
 }
 
-function AppShellContent() {
-  const session = useAppSession();
+function AppShellContent({ session }: { session: ReturnType<typeof useAppSession> }) {
   const { colors, isDark } = useAppTheme();
   const styles = createStyles(colors);
 
@@ -372,29 +397,107 @@ const splashStyles = StyleSheet.create({
     justifyContent: 'center',
     zIndex: 100,
   },
+  logoScene: {
+    alignItems: 'center',
+    height: 260,
+    justifyContent: 'center',
+    width: 260,
+  },
+  haloOuter: {
+    borderColor: 'rgba(94,234,212,0.18)',
+    borderRadius: 118,
+    borderWidth: 1,
+    height: 236,
+    position: 'absolute',
+    width: 236,
+  },
+  haloInner: {
+    backgroundColor: 'rgba(45,212,191,0.07)',
+    borderColor: 'rgba(94,234,212,0.36)',
+    borderRadius: 92,
+    borderWidth: 1,
+    height: 184,
+    position: 'absolute',
+    width: 184,
+  },
+  spark: {
+    backgroundColor: '#F5A06D',
+    borderRadius: 5,
+    height: 10,
+    position: 'absolute',
+    width: 10,
+  },
+  sparkTop: {
+    right: 35,
+    top: 51,
+  },
+  sparkBottom: {
+    bottom: 39,
+    left: 49,
+  },
   logo: {
-    height: 220,
-    width: 220,
+    alignItems: 'center',
+    backgroundColor: '#147D64',
+    borderRadius: 32,
+    height: 128,
+    justifyContent: 'center',
+    shadowColor: '#000000',
+    shadowOffset: { height: 14, width: 0 },
+    shadowOpacity: 0.28,
+    shadowRadius: 24,
+    width: 128,
+  },
+  logoInset: {
+    alignItems: 'center',
+    backgroundColor: '#2DD4BF',
+    borderRadius: 25,
+    height: 96,
+    justifyContent: 'center',
+    width: 96,
+  },
+  logoText: {
+    color: '#FFFFFF',
+    fontSize: 54,
+    fontWeight: typography.weight.black,
+    letterSpacing: -3,
+  },
+  logoAccent: {
+    backgroundColor: '#F5A06D',
+    borderColor: '#0F172A',
+    borderRadius: 10,
+    borderWidth: 4,
+    bottom: 3,
+    height: 20,
+    position: 'absolute',
+    right: 3,
+    width: 20,
+  },
+  eyebrow: {
+    color: '#5EEAD4',
+    fontSize: 12,
+    fontWeight: typography.weight.black,
+    letterSpacing: 4,
   },
   title: {
     color: '#F8FAFC',
-    fontSize: 28,
+    fontSize: 24,
     fontWeight: typography.weight.black,
-    letterSpacing: 5,
-    marginTop: -12,
+    letterSpacing: -0.5,
+    marginTop: spacing.md,
+    textAlign: 'center',
   },
   subtitle: {
-    color: '#5EEAD4',
+    color: '#94A3B8',
     fontSize: 10,
     fontWeight: typography.weight.bold,
-    letterSpacing: 2,
-    marginTop: spacing.sm,
+    letterSpacing: 2.2,
+    marginTop: spacing.md,
   },
   track: {
     backgroundColor: 'rgba(255,255,255,0.12)',
     borderRadius: 3,
     height: 3,
-    marginTop: 36,
+    marginTop: 32,
     overflow: 'hidden',
     width: 120,
   },
