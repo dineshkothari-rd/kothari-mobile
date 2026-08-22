@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
 import * as SystemUI from 'expo-system-ui';
-import { ActivityIndicator, Animated, AppState, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, AppState, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { firebaseConfigStatus } from '../config/firebaseConfig';
 import { SignInScreen } from '../features/auth/SignInScreen';
@@ -155,7 +155,7 @@ function AppShellContent({ session }: { session: ReturnType<typeof useAppSession
         {!firebaseConfigStatus.ready ? (
           <MissingConfigScreen />
         ) : session.status === 'checking' ? (
-          <CheckingScreen styles={styles} colors={colors} />
+          null
         ) : session.profile && (session.profile.accessStatus === 'suspended' || session.profile.accessStatus === 'revoked') ? (
           <AccountAccessScreen accessStatus={session.profile.accessStatus} onSignOut={session.signOut} />
         ) : session.profile && !session.profile.emailVerified ? (
@@ -267,21 +267,6 @@ function AccountAccessScreen({ accessStatus, onSignOut }: { accessStatus: 'revok
   );
 }
 
-function CheckingScreen({ colors, styles }: { colors: AppColors; styles: ReturnType<typeof createStyles> }) {
-  const { t } = useLanguage();
-
-  return (
-    <View style={styles.centered}>
-      <View style={styles.brandMark}>
-        <Text style={styles.brandMarkText}>K</Text>
-      </View>
-      <ActivityIndicator color={colors.brand} style={styles.loader} />
-      <Text style={styles.centerTitle}>{t('Getting things ready')}</Text>
-      <Text style={styles.centerText}>{t('Opening your dashboard.')}</Text>
-    </View>
-  );
-}
-
 function MissingConfigScreen() {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
@@ -331,9 +316,6 @@ function createStyles(colors: AppColors) {
     color: colors.warning,
     fontSize: 28,
     fontWeight: typography.weight.black,
-  },
-  loader: {
-    marginTop: spacing.xl,
   },
   centered: {
     alignItems: 'center',

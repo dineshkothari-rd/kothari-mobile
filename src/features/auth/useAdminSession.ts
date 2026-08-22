@@ -15,7 +15,6 @@ export function useAppSession() {
     let stopProfile: () => void = () => undefined;
     const unsubscribe = watchAuthState(async (user) => {
       stopProfile();
-      setStatus('checking');
 
       if (!user) {
         setProfile(null);
