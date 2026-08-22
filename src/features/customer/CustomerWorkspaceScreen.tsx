@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
+import { collection, doc, onSnapshot, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
@@ -37,6 +37,16 @@ export function CustomerWorkspaceScreen({ onSignOut, profile }: { onSignOut: () 
     [customer, isStaying, month, payments],
   );
   const business = getBusinessType(customer?.businessType);
+
+  useEffect(() => {
+    if (profile.accessStatus !== 'invited') return;
+
+    const batch = writeBatch(db);
+    const activation = { accessStatus: 'active', activatedAt: serverTimestamp(), updatedAt: serverTimestamp() };
+    batch.update(doc(db, 'users', profile.uid), activation);
+    batch.update(doc(db, 'tenants', profile.customerId), activation);
+    batch.commit().catch(() => undefined);
+  }, [profile.accessStatus, profile.customerId, profile.uid]);
 
   return (
     <View style={styles.screen}>

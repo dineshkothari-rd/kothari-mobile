@@ -17,7 +17,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as Crypto from 'expo-crypto';
 import { createUserWithEmailAndPassword, deleteUser, sendPasswordResetEmail, signOut, type User } from 'firebase/auth';
-import { addDoc, collection, deleteDoc, doc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import { addDoc, collection, doc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
@@ -166,6 +166,7 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
   const [deletingId, setDeletingId] = useState('');
   const [cancellingId, setCancellingId] = useState('');
   const [invitingId, setInvitingId] = useState('');
+  const [accessChangingId, setAccessChangingId] = useState('');
   const [checkingOutId, setCheckingOutId] = useState('');
   const [checkingInId, setCheckingInId] = useState('');
   const [actionError, setActionError] = useState('');
@@ -283,12 +284,34 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
     }
   }
 
-  async function deleteCustomer(customerId: string) {
-    setDeletingId(customerId);
+  async function deleteCustomer(customer: TenantRecord) {
+    const actorUid = auth.currentUser?.uid;
+    if (!actorUid) {
+      setActionError(t('Please sign in again.'));
+      return;
+    }
+
+    setDeletingId(customer.id);
     setActionError('');
 
     try {
-      await deleteDoc(doc(db, 'tenants', customerId));
+      const batch = writeBatch(db);
+      if (customer.userId) {
+        batch.update(doc(db, 'users', customer.userId), {
+          accessStatus: 'revoked',
+          revokedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      batch.delete(doc(db, 'tenants', customer.id));
+      batch.set(doc(collection(db, 'auditEvents')), {
+        action: 'customer.deleted',
+        actorUid,
+        createdAt: serverTimestamp(),
+        customerId: customer.id,
+        customerName: getCustomerName(customer),
+      });
+      await batch.commit();
     } catch (deleteError) {
       setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete customer.'));
     } finally {
@@ -299,7 +322,7 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
   function confirmDelete(customer: TenantRecord) {
     Alert.alert(t('Delete customer?'), `${t('Delete')} ${customer.name || t('this customer')}? ${t('This cannot be undone.')}`, [
       { text: t('Cancel'), style: 'cancel' },
-      { text: t('Delete'), style: 'destructive', onPress: () => deleteCustomer(customer.id) },
+      { text: t('Delete'), style: 'destructive', onPress: () => deleteCustomer(customer) },
     ]);
   }
 
@@ -331,6 +354,7 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
 
           const batch = writeBatch(db);
           batch.set(doc(db, 'users', createdUser.uid), {
+            accessStatus: 'invited',
             createdAt: serverTimestamp(),
             customerId: customer.id,
             email,
@@ -373,6 +397,39 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
       Alert.alert(t('Could not send access'), message);
     } finally {
       setInvitingId('');
+    }
+  }
+
+  async function changeCustomerAccess(customer: TenantRecord) {
+    if (!customer.userId || customer.accessStatus === 'revoked') return;
+
+    const actorUid = auth.currentUser?.uid;
+    if (!actorUid) {
+      setActionError(t('Please sign in again.'));
+      return;
+    }
+
+    const nextStatus = customer.accessStatus === 'suspended' ? 'active' : 'suspended';
+    setAccessChangingId(customer.id);
+    setActionError('');
+
+    try {
+      const batch = writeBatch(db);
+      const accessUpdate = { accessStatus: nextStatus, accessUpdatedAt: serverTimestamp(), updatedAt: serverTimestamp() };
+      batch.update(doc(db, 'users', customer.userId), accessUpdate);
+      batch.update(doc(db, 'tenants', customer.id), accessUpdate);
+      batch.set(doc(collection(db, 'auditEvents')), {
+        action: `customer.access_${nextStatus}`,
+        actorUid,
+        createdAt: serverTimestamp(),
+        customerId: customer.id,
+        customerName: getCustomerName(customer),
+      });
+      await batch.commit();
+    } catch (accessError) {
+      setActionError(accessError instanceof Error ? accessError.message : t('Could not update customer access.'));
+    } finally {
+      setAccessChangingId('');
     }
   }
 
@@ -555,11 +612,19 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
     try {
       const batch = writeBatch(db);
       batch.update(doc(db, 'tenants', customer.id), {
+        ...(customer.userId ? { accessStatus: 'revoked', revokedAt: serverTimestamp() } : {}),
         cancelledAt: serverTimestamp(),
         cancelledBy: actorUid,
         status: 'cancelled',
         updatedAt: serverTimestamp(),
       });
+      if (customer.userId) {
+        batch.update(doc(db, 'users', customer.userId), {
+          accessStatus: 'revoked',
+          revokedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
       batch.set(doc(collection(db, 'auditEvents')), {
         action: 'customer.reservation_cancelled',
         actorUid,
@@ -743,6 +808,8 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
         {filtered.length ? (
           filtered.slice(0, 40).map((tenant) => (
             <CustomerCard
+              accessActionLabel={tenant.accessStatus === 'suspended' ? 'Restore access' : 'Suspend access'}
+              accessChanging={accessChangingId === tenant.id}
               cancelling={cancellingId === tenant.id}
               checkingIn={checkingInId === tenant.id}
               checkingOut={checkingOutId === tenant.id}
@@ -753,8 +820,9 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
               key={tenant.id}
               onDelete={isAdmin ? () => confirmDelete(tenant) : undefined}
               onCancel={() => confirmCancelReservation(tenant)}
+              onAccessChange={isAdmin && tenant.userId && tenant.accessStatus !== 'revoked' ? () => changeCustomerAccess(tenant) : undefined}
               onEdit={() => openEditForm(tenant)}
-              onInvite={isAdmin ? () => shareCustomerAccess(tenant) : undefined}
+              onInvite={isAdmin && getCustomerStatusGroup(tenant) !== 'cancelled' && tenant.accessStatus !== 'suspended' && tenant.accessStatus !== 'revoked' ? () => shareCustomerAccess(tenant) : undefined}
               onCheckIn={() => confirmCheckIn(tenant)}
               onCheckOut={() => confirmCheckOut(tenant)}
               onToggle={() => setSelectedCustomerId((current) => current === tenant.id ? '' : tenant.id)}

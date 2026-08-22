@@ -1,15 +1,25 @@
 import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from 'firebase/auth';
-import { doc, getDoc } from 'firebase/firestore';
+import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 
 import { auth, db } from '../../lib/firebase/client';
-import type { AppProfile, AppRole } from '../../shared/types/admin';
+import type { AppProfile, AppRole, CustomerAccessStatus } from '../../shared/types/admin';
 
 export function watchAuthState(callback: (user: User | null) => void) {
   return onAuthStateChanged(auth, callback);
 }
 
+export function watchAppProfile(user: User, callback: (profile: AppProfile | null) => void, onError: () => void) {
+  return onSnapshot(doc(db, 'users', user.uid), () => {
+    getAppProfile(user).then(callback).catch(onError);
+  }, onError);
+}
+
 function isAppRole(value: unknown): value is AppRole {
   return value === 'admin' || value === 'staff' || value === 'customer';
+}
+
+function getCustomerAccessStatus(value: unknown): CustomerAccessStatus {
+  return value === 'active' || value === 'suspended' || value === 'revoked' ? value : 'invited';
 }
 
 export async function getAppProfile(user: User | null): Promise<AppProfile | null> {
@@ -28,7 +38,9 @@ export async function getAppProfile(user: User | null): Promise<AppProfile | nul
       uid: user.uid,
     };
 
-    if (role === 'customer') return customerId ? { ...base, customerId, role } : null;
+    if (role === 'customer') {
+      return customerId ? { ...base, accessStatus: getCustomerAccessStatus(data?.accessStatus), customerId, role } : null;
+    }
 
     return { ...base, role };
   }

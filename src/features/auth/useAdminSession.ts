@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { AppProfile } from '../../shared/types/admin';
-import { getAppProfile, signInAccount, signOutAccount, watchAuthState } from './authService';
+import { getAppProfile, signInAccount, signOutAccount, watchAppProfile, watchAuthState } from './authService';
 
 type SessionStatus = 'checking' | 'signedOut' | 'signedIn';
 
@@ -12,7 +12,9 @@ export function useAppSession() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    let stopProfile: () => void = () => undefined;
     const unsubscribe = watchAuthState(async (user) => {
+      stopProfile();
       setStatus('checking');
 
       if (!user) {
@@ -35,6 +37,13 @@ export function useAppSession() {
         setProfile(nextProfile);
         setError('');
         setStatus('signedIn');
+        stopProfile = watchAppProfile(user, (updatedProfile) => {
+          if (!updatedProfile) {
+            signOutAccount().catch(() => undefined);
+            return;
+          }
+          setProfile(updatedProfile);
+        }, () => setError('Could not refresh account access. Please try again.'));
       } catch {
         setProfile(null);
         setError('Could not verify account access. Please try again.');
@@ -42,7 +51,10 @@ export function useAppSession() {
       }
     });
 
-    return unsubscribe;
+    return () => {
+      stopProfile();
+      unsubscribe();
+    };
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {

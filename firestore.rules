@@ -36,16 +36,68 @@ service cloud.firestore {
       return signedIn() && role() == 'customer';
     }
 
+    function customerAccessAllowed() {
+      return customer()
+        && get(/databases/$(database)/documents/users/$(request.auth.uid))
+          .data.get('accessStatus', 'invited') in ['active', 'invited'];
+    }
+
     function customerId() {
       return request.auth.token.get('customerId', null) != null
         ? request.auth.token.get('customerId', null)
         : get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('customerId', '');
     }
 
+    function customerActivatingUser(userId) {
+      return signedIn()
+        && request.auth.uid == userId
+        && resource.data.role == 'customer'
+        && resource.data.get('accessStatus', 'invited') == 'invited'
+        && request.resource.data.accessStatus == 'active'
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['accessStatus', 'activatedAt', 'updatedAt'])
+        && getAfter(/databases/$(database)/documents/tenants/$(resource.data.customerId))
+          .data.accessStatus == 'active';
+    }
+
+    function staffRevokingCustomerUser() {
+      return role() == 'staff'
+        && resource.data.role == 'customer'
+        && request.resource.data.role == 'customer'
+        && request.resource.data.accessStatus == 'revoked'
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['accessStatus', 'revokedAt', 'updatedAt'])
+        && getAfter(/databases/$(database)/documents/tenants/$(resource.data.customerId))
+          .data.status == 'cancelled';
+    }
+
+    function customerActivatingTenant(tenantId) {
+      return customer()
+        && tenantId == customerId()
+        && resource.data.get('accessStatus', 'invited') == 'invited'
+        && request.resource.data.accessStatus == 'active'
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['accessStatus', 'activatedAt', 'updatedAt'])
+        && getAfter(/databases/$(database)/documents/users/$(request.auth.uid))
+          .data.accessStatus == 'active';
+    }
+
+    function staffUpdatingTenantAccess() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return role() == 'staff'
+        && !changed.hasAny(['invitedAt', 'invitedBy', 'userId'])
+        && (!changed.hasAny(['accessStatus'])
+          || (request.resource.data.accessStatus == 'revoked'
+            && request.resource.data.status == 'cancelled'
+            && getAfter(/databases/$(database)/documents/users/$(resource.data.userId))
+              .data.accessStatus == 'revoked'));
+    }
+
     match /users/{userId} {
       allow read: if admin() || (signedIn() && request.auth.uid == userId);
       allow create, update: if admin()
         && request.resource.data.role in ['admin', 'staff', 'customer'];
+      allow update: if customerActivatingUser(userId) || staffRevokingCustomerUser();
       allow delete: if admin();
     }
 
@@ -55,18 +107,17 @@ service cloud.firestore {
     }
 
     match /tenants/{tenantId} {
-      allow read: if staff() || (customer() && tenantId == customerId());
+      allow read: if staff() || (customerAccessAllowed() && tenantId == customerId());
       allow create: if staff()
         && !request.resource.data.keys().hasAny(['accessStatus', 'invitedAt', 'invitedBy', 'userId']);
       allow update: if admin()
-        || (role() == 'staff'
-          && !request.resource.data.diff(resource.data).affectedKeys()
-            .hasAny(['accessStatus', 'invitedAt', 'invitedBy', 'userId']));
+        || staffUpdatingTenantAccess()
+        || customerActivatingTenant(tenantId);
       allow delete: if admin();
     }
 
     match /payments/{paymentId} {
-      allow read: if staff() || (customer() && resource.data.tenantId == customerId());
+      allow read: if staff() || (customerAccessAllowed() && resource.data.tenantId == customerId());
       allow create: if staff()
         && request.resource.data.createdBy == request.auth.uid
         && request.resource.data.amountPaid is number
@@ -94,14 +145,14 @@ service cloud.firestore {
     }
 
     match /meterReadings/{readingId} {
-      allow read: if staff() || (customer() && resource.data.tenantId == customerId());
+      allow read: if staff() || (customerAccessAllowed() && resource.data.tenantId == customerId());
       allow write: if staff();
     }
 
     match /notices/{noticeId} {
       allow read: if staff()
-        || (customer() && resource.data.audience == 'all')
-        || (customer()
+        || (customerAccessAllowed() && resource.data.audience == 'all')
+        || (customerAccessAllowed()
           && resource.data.audience == 'customer'
           && resource.data.tenantId == customerId());
       allow create, update: if staff()

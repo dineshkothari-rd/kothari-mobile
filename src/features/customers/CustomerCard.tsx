@@ -8,6 +8,8 @@ import { getBusinessType } from './businessTypes';
 import { getCustomerName, getCustomerStatus, getCustomerStatusGroup, getCustomerStatusLabel, getCustomerSubtitle } from './customerUtils';
 
 type CustomerCardProps = {
+  accessChanging?: boolean;
+  accessActionLabel?: string;
   customer: TenantRecord;
   deleting?: boolean;
   expanded: boolean;
@@ -21,11 +23,12 @@ type CustomerCardProps = {
   checkingIn?: boolean;
   cancelling?: boolean;
   onCancel?: () => void;
+  onAccessChange?: () => void;
   onToggle: () => void;
   onViewIdProof?: () => void;
 };
 
-export function CustomerCard({ customer, cancelling = false, checkingIn = false, checkingOut = false, deleting = false, expanded, inviting = false, onCancel, onCheckIn, onCheckOut, onDelete, onEdit, onInvite, onToggle, onViewIdProof }: CustomerCardProps) {
+export function CustomerCard({ accessActionLabel, accessChanging = false, customer, cancelling = false, checkingIn = false, checkingOut = false, deleting = false, expanded, inviting = false, onAccessChange, onCancel, onCheckIn, onCheckOut, onDelete, onEdit, onInvite, onToggle, onViewIdProof }: CustomerCardProps) {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
   const styles = createStyles(colors);
@@ -131,6 +134,9 @@ export function CustomerCard({ customer, cancelling = false, checkingIn = false,
           <Text style={styles.expandedText}>
             {services.length ? `${services.join(', ')} ${t('included.')}` : t('No services added yet.')}
           </Text>
+          {customer.userId ? (
+            <Text style={styles.expandedText}>{t('App access')}: {t(`${String(customer.accessStatus || 'invited').charAt(0).toUpperCase()}${String(customer.accessStatus || 'invited').slice(1)}`)}</Text>
+          ) : null}
           <View style={styles.expandedActions}>
             <Pressable accessibilityRole="button" disabled={!customer.phone} onPress={callCustomer} style={styles.expandedAction}>
               <Text style={styles.expandedActionText}>{t('Call')}</Text>
@@ -143,6 +149,11 @@ export function CustomerCard({ customer, cancelling = false, checkingIn = false,
             {onInvite ? (
               <Pressable accessibilityRole="button" disabled={inviting} onPress={onInvite} style={[styles.expandedAction, inviting && styles.disabledAction]}>
                 <Text style={styles.expandedActionText}>{t(inviting ? 'Sending access...' : customer.userId ? 'Resend access email' : 'Send access email')}</Text>
+              </Pressable>
+            ) : null}
+            {onAccessChange && accessActionLabel ? (
+              <Pressable accessibilityRole="button" disabled={accessChanging} onPress={onAccessChange} style={[styles.expandedAction, accessChanging && styles.disabledAction]}>
+                <Text style={styles.expandedActionText}>{t(accessChanging ? customer.accessStatus === 'suspended' ? 'Restoring access...' : 'Suspending access...' : accessActionLabel)}</Text>
               </Pressable>
             ) : null}
           </View>

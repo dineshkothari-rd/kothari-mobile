@@ -10,7 +10,7 @@ export type TenantRecord = FirestoreRecord & {
   documentType?: string;
   fullName?: string;
   email?: string;
-  accessStatus?: 'invited';
+  accessStatus?: 'active' | 'invited' | 'revoked' | 'suspended';
   idProof?: string | null;
   idProofName?: string | null;
   idProofSize?: number;

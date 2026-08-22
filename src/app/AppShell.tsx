@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
 import * as SystemUI from 'expo-system-ui';
-import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { firebaseConfigStatus } from '../config/firebaseConfig';
 import { SignInScreen } from '../features/auth/SignInScreen';
@@ -44,7 +44,11 @@ function AppShellContent() {
         ) : session.status === 'checking' ? (
           <CheckingScreen styles={styles} colors={colors} />
         ) : session.profile?.role === 'customer' ? (
-          <CustomerWorkspaceScreen onSignOut={session.signOut} profile={session.profile} />
+          session.profile.accessStatus === 'suspended' || session.profile.accessStatus === 'revoked' ? (
+            <CustomerAccessScreen accessStatus={session.profile.accessStatus} onSignOut={session.signOut} />
+          ) : (
+            <CustomerWorkspaceScreen onSignOut={session.signOut} profile={session.profile} />
+          )
         ) : session.profile ? (
           <WorkspaceScreen admin={session.profile} onSignOut={session.signOut} />
         ) : (
@@ -52,6 +56,26 @@ function AppShellContent() {
         )}
       </View>
     </AppErrorBoundary>
+  );
+}
+
+function CustomerAccessScreen({ accessStatus, onSignOut }: { accessStatus: 'revoked' | 'suspended'; onSignOut: () => void }) {
+  const { colors } = useAppTheme();
+  const { t } = useLanguage();
+  const styles = createStyles(colors);
+  const suspended = accessStatus === 'suspended';
+
+  return (
+    <View style={styles.centered}>
+      <View style={styles.warningMark}><Text style={styles.warningMarkText}>!</Text></View>
+      <Text style={styles.centerTitle}>{t(suspended ? 'Access suspended' : 'Access revoked')}</Text>
+      <Text style={styles.centerText}>
+        {t(suspended ? 'Please contact the administrator to restore your access.' : 'This customer access is no longer active.')}
+      </Text>
+      <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.signOutButton}>
+        <Text style={styles.signOutText}>{t('Logout')}</Text>
+      </Pressable>
+    </View>
   );
 }
 
@@ -142,6 +166,18 @@ function createStyles(colors: AppColors) {
     lineHeight: 20,
     marginTop: spacing.sm,
     textAlign: 'center',
+  },
+  signOutButton: {
+    backgroundColor: colors.ink,
+    borderRadius: radius.md,
+    marginTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+  },
+  signOutText: {
+    color: colors.onBrand,
+    fontSize: 13,
+    fontWeight: typography.weight.black,
   },
   });
 }
