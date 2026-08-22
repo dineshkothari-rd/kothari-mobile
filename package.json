@@ -23,13 +23,17 @@
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
+    "@firebase/rules-unit-testing": "^5.0.2",
     "@types/react": "~19.1.0",
+    "tsx": "^4.23.12",
     "typescript": "~5.9.2"
   },
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
+    "test": "tsx --test src/features/customer/customerNotices.test.ts src/features/customers/customerLifecycle.test.ts src/features/customers/roomUtils.test.ts src/features/operations/operationsMath.test.ts",
+    "test:rules": "npx firebase-tools emulators:exec --only firestore \"node --test firestore.rules.test.mjs\"",
     "web": "expo start --web"
   },
   "engines": {

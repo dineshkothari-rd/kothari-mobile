@@ -44,7 +44,7 @@ export function OperationsOverviewScreen({ onNavigate }: { onNavigate: (destinat
   const monthlyExpenses = expenses.data.filter((expense) => matchesMonth(expense, month, expenseDateFields));
   const monthlyEnquiries = enquiries.data.filter((enquiry) => matchesMonth(enquiry, month, activityDateFields));
   const monthlyReadings = meterReadings.data.filter((reading) => matchesMonth(reading, month, activityDateFields));
-  const dues = calculateMonthlyDues(tenants.data, payments.data, month);
+  const dues = calculateMonthlyDues(tenants.data, payments.data, month, meterReadings.data);
   const duesSummary = summarizeDues(dues);
   const collected = getCollectedTotal(monthlyPayments);
   const expenseTotal = getExpenseTotal(monthlyExpenses);

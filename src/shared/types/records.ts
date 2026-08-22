@@ -160,9 +160,11 @@ export type MeterReadingRecord = FirestoreRecord & {
 };
 
 export type DueRecord = {
+  baseAmount: number;
   balance: number;
   businessType: string;
   id: string;
+  meterAmount: number;
   month: string;
   paid: number;
   phone: string;

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ActivityIndicator, Alert, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { addDoc, collection, deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { collection, deleteDoc, doc, runTransaction, serverTimestamp, updateDoc } from 'firebase/firestore';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { db } from '../../lib/firebase/client';
@@ -136,32 +136,40 @@ export function EnquiriesScreen() {
     setActionError('');
 
     try {
-      await addDoc(collection(db, 'tenants'), {
-        businessType,
-        createdAt: serverTimestamp(),
-        email: enquiry.email || '',
-        idProof: null,
-        idProofName: null,
-        idProofSize: 0,
-        idProofType: null,
-        moveInDate: '',
-        moveInTime: '12:00',
-        moveOutDate: '',
-        moveOutTime: '11:00',
-        name: enquiry.name || t('Unnamed enquiry'),
-        phone: enquiry.phone || '',
-        rent: 0,
-        room: '',
-        roomType: enquiry.roomType || '',
-        services: [],
-        sourceEnquiryId: enquiry.id,
-        sourceMessage: enquiry.message || '',
-        status,
-      });
-      await updateDoc(doc(db, 'enquiries', enquiry.id), {
-        convertedAt: serverTimestamp(),
-        status: 'Converted',
-        updatedAt: serverTimestamp(),
+      const enquiryRef = doc(db, 'enquiries', enquiry.id);
+      const customerRef = doc(collection(db, 'tenants'));
+      await runTransaction(db, async (transaction) => {
+        const latest = await transaction.get(enquiryRef);
+        if (!latest.exists() || latest.data().status === 'Converted') throw new Error(t('This enquiry is already converted.'));
+
+        transaction.set(customerRef, {
+          businessType,
+          createdAt: serverTimestamp(),
+          email: enquiry.email || '',
+          idProof: null,
+          idProofName: null,
+          idProofSize: 0,
+          idProofType: null,
+          moveInDate: '',
+          moveInTime: '12:00',
+          moveOutDate: '',
+          moveOutTime: '11:00',
+          name: enquiry.name || t('Unnamed enquiry'),
+          phone: enquiry.phone || '',
+          rent: 0,
+          room: '',
+          roomType: enquiry.roomType || '',
+          services: [],
+          sourceEnquiryId: enquiry.id,
+          sourceMessage: enquiry.message || '',
+          status,
+        });
+        transaction.update(enquiryRef, {
+          convertedAt: serverTimestamp(),
+          customerId: customerRef.id,
+          status: 'Converted',
+          updatedAt: serverTimestamp(),
+        });
       });
     } catch (convertError) {
       setActionError(convertError instanceof Error ? convertError.message : t('Could not convert enquiry.'));

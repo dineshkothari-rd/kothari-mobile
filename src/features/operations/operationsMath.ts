@@ -1,12 +1,8 @@
-import type { DueRecord, ExpenseRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
+import type { DueRecord, ExpenseRecord, MeterReadingRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
 import { toNumber } from '../../shared/utils/money';
 
-const activeStatuses = new Set(['active', 'booked', 'checked in', 'occupied']);
-
-function getMonthEndDate(month: string) {
-  const [year, monthNumber] = month.split('-').map(Number);
-  return new Date(year, monthNumber, 0, 23, 59, 59, 999);
-}
+const activeStatuses = new Set(['active', 'checked in', 'occupied']);
+const completedStatuses = new Set(['checked out', 'inactive']);
 
 export function getMonthKey(date = new Date()) {
   const year = date.getFullYear();
@@ -104,13 +100,19 @@ export function getExpenseTotal(expenses: ExpenseRecord[] = []) {
 export function isTenantActiveForMonth(tenant: TenantRecord, month: string) {
   const status = String(tenant.status || 'active').toLowerCase();
 
-  if (!activeStatuses.has(status)) return false;
-  if (!tenant.moveInDate) return true;
+  if (!activeStatuses.has(status) && !completedStatuses.has(status)) return false;
 
-  const moveInDate = new Date(tenant.moveInDate);
-  if (Number.isNaN(moveInDate.getTime())) return true;
+  const startMonth = readDateValue(tenant, ['checkedInAt', 'moveInDate', 'checkInDate']).slice(0, 7);
+  const endMonth = readDateValue(tenant, ['checkedOutAt', 'moveOutDate', 'checkOutDate', 'checkoutDate', 'endDate']).slice(0, 7);
 
-  return moveInDate <= getMonthEndDate(month);
+  if (startMonth && month < startMonth) return false;
+  if (endMonth && month > endMonth) return false;
+  if (completedStatuses.has(status) && !startMonth && !endMonth) return false;
+
+  // Hotel charges are for one stay, not a recurring monthly rent.
+  if (tenant.businessType === 'hotel' && startMonth) return month === startMonth;
+
+  return true;
 }
 
 function getDueStatus(rent: number, paid: number): DueRecord['status'] {
@@ -121,10 +123,27 @@ function getDueStatus(rent: number, paid: number): DueRecord['status'] {
   return 'Pending';
 }
 
+export function calculatePaymentResult(
+  totalCharge: number,
+  payments: PaymentRecord[],
+  tenantId: string,
+  month: string,
+  amountPaid: number,
+) {
+  const alreadyPaid = payments.reduce((total, payment) =>
+    getPaymentTenantId(payment) === tenantId && payment.month === month && !isVoided(payment)
+      ? total + getPaymentAmount(payment)
+      : total, 0);
+  const paid = alreadyPaid + amountPaid;
+
+  return { balance: Math.max(0, totalCharge - paid), status: getDueStatus(totalCharge, paid) };
+}
+
 export function calculateMonthlyDues(
   tenants: TenantRecord[] = [],
   payments: PaymentRecord[] = [],
   month = getMonthKey(),
+  meterReadings: MeterReadingRecord[] = [],
 ): DueRecord[] {
   const paymentsByTenant = payments.reduce<Record<string, number>>((map, payment) => {
     const tenantId = getPaymentTenantId(payment);
@@ -134,18 +153,27 @@ export function calculateMonthlyDues(
     map[tenantId] = (map[tenantId] || 0) + getPaymentAmount(payment);
     return map;
   }, {});
+  const meterByTenant = meterReadings.reduce<Record<string, number>>((map, reading) => {
+    if (!reading.tenantId || reading.month !== month) return map;
+    map[reading.tenantId] = (map[reading.tenantId] || 0) + toNumber(reading.billAmount);
+    return map;
+  }, {});
 
   return tenants
     .filter((tenant) => isTenantActiveForMonth(tenant, month))
     .map((tenant) => {
-      const rent = toNumber(tenant.rent);
+      const baseAmount = toNumber(tenant.rent);
+      const meterAmount = meterByTenant[tenant.id] || 0;
+      const rent = baseAmount + meterAmount;
       const paid = paymentsByTenant[tenant.id] || 0;
       const balance = Math.max(0, rent - paid);
 
       return {
+        baseAmount,
         balance,
         businessType: tenant.businessType || 'pg',
         id: `${tenant.id}-${month}`,
+        meterAmount,
         month,
         paid,
         phone: tenant.phone || '',
@@ -156,6 +184,33 @@ export function calculateMonthlyDues(
         tenantRoom: tenant.room || '',
       };
     });
+}
+
+export function calculateOutstandingBalance(
+  tenant: TenantRecord,
+  payments: PaymentRecord[] = [],
+  meterReadings: MeterReadingRecord[] = [],
+  throughMonth = getMonthKey(),
+) {
+  const status = String(tenant.status || 'active').toLowerCase();
+  if (status === 'booked' || status === 'cancelled') return 0;
+
+  const startMonth = readDateValue(tenant, ['checkedInAt', 'moveInDate', 'checkInDate']).slice(0, 7) || throughMonth;
+  const recordedEnd = readDateValue(tenant, ['checkedOutAt', 'moveOutDate', 'checkOutDate', 'checkoutDate', 'endDate']).slice(0, 7);
+  const endMonth = recordedEnd && recordedEnd < throughMonth ? recordedEnd : throughMonth;
+  const months = tenant.businessType === 'hotel' ? [startMonth] : [];
+
+  if (tenant.businessType !== 'hotel') {
+    // ponytail: 20-year cap protects corrupted dates; move to stored invoices if longer histories are ever needed.
+    for (let month = startMonth, count = 0; month <= endMonth && count < 240; month = shiftMonth(month, 1), count += 1) {
+      months.push(month);
+    }
+  }
+
+  return months.reduce(
+    (balance, month) => balance + (calculateMonthlyDues([tenant], payments, month, meterReadings)[0]?.balance || 0),
+    0,
+  );
 }
 
 export function summarizeDues(dues: DueRecord[] = []) {

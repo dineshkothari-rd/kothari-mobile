@@ -107,12 +107,23 @@ service cloud.firestore {
     function staffUpdatingTenantAccess() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
       return staffAccessAllowed()
+        && validTenantStatusTransition(changed)
         && !changed.hasAny(['invitedAt', 'invitedBy', 'userId'])
         && (!changed.hasAny(['accessStatus'])
           || (request.resource.data.accessStatus == 'revoked'
             && request.resource.data.status == 'cancelled'
             && getAfter(/databases/$(database)/documents/users/$(resource.data.userId))
               .data.accessStatus == 'revoked'));
+    }
+
+    function validTenantStatus(status) {
+      return status in ['active', 'booked', 'cancelled', 'checked in', 'checked out', 'inactive', 'occupied'];
+    }
+
+    function validTenantStatusTransition(changed) {
+      return !changed.hasAny(['status'])
+        || (resource.data.status == 'booked' && request.resource.data.status in ['active', 'cancelled', 'checked in'])
+        || (resource.data.status in ['active', 'checked in', 'occupied'] && request.resource.data.status in ['checked out', 'inactive']);
     }
 
     match /users/{userId} {
@@ -133,6 +144,7 @@ service cloud.firestore {
     match /tenants/{tenantId} {
       allow read: if staff() || (customerAccessAllowed() && tenantId == customerId());
       allow create: if staff()
+        && validTenantStatus(request.resource.data.status)
         && !request.resource.data.keys().hasAny(['accessStatus', 'invitedAt', 'invitedBy', 'userId']);
       allow update: if admin()
         || staffUpdatingTenantAccess()
@@ -144,6 +156,9 @@ service cloud.firestore {
       allow read: if staff() || (customerAccessAllowed() && resource.data.tenantId == customerId());
       allow create: if staff()
         && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.tenantId is string
+        && exists(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId))
+        && request.resource.data.month is string
         && request.resource.data.amountPaid is number
         && request.resource.data.amountPaid > 0;
       allow update: if staff()
@@ -170,7 +185,12 @@ service cloud.firestore {
 
     match /meterReadings/{readingId} {
       allow read: if staff() || (customerAccessAllowed() && resource.data.tenantId == customerId());
-      allow write: if staff();
+      allow create: if staff()
+        && request.resource.data.tenantId is string
+        && exists(/databases/$(database)/documents/tenants/$(request.resource.data.tenantId))
+        && request.resource.data.currentReading is number
+        && request.resource.data.currentReading >= 0;
+      allow update, delete: if staff();
     }
 
     match /notices/{noticeId} {
@@ -180,6 +200,10 @@ service cloud.firestore {
           && resource.data.audience == 'customer'
           && resource.data.tenantId == customerId());
       allow create, update: if staff()
+        && request.resource.data.title is string
+        && request.resource.data.title.size() > 0
+        && request.resource.data.message is string
+        && request.resource.data.message.size() > 0
         && request.resource.data.audience in ['all', 'customer', 'staff']
         && (request.resource.data.audience != 'customer'
           || request.resource.data.tenantId is string);

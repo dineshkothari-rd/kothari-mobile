@@ -58,6 +58,27 @@ export function getStayCheckout(customer: TenantRecord) {
   return null;
 }
 
+function getStayStart(customer: TenantRecord) {
+  for (const startValue of [customer.moveInDate, customer.checkInDate, customer.checkedInAt]) {
+    const parsed = parseStayDate(startValue, customer.moveInTime);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+export function staysOverlap(first: TenantRecord, second: TenantRecord) {
+  if ([getCustomerStatus(first), getCustomerStatus(second)].includes('cancelled')) return false;
+
+  const firstStart = getStayStart(first);
+  const secondStart = getStayStart(second);
+  const firstEnd = getStayCheckout(first);
+  const secondEnd = getStayCheckout(second);
+
+  return (firstStart?.getTime() ?? Number.NEGATIVE_INFINITY) < (secondEnd?.getTime() ?? Number.POSITIVE_INFINITY)
+    && (secondStart?.getTime() ?? Number.NEGATIVE_INFINITY) < (firstEnd?.getTime() ?? Number.POSITIVE_INFINITY);
+}
+
 export function parseRoomLabel(value: unknown) {
   const text = String(value || '');
   const roomMatch = text.match(/Room\s+(\d+)/i);
@@ -92,8 +113,12 @@ export function isRoomCustomer(customer: TenantRecord, now = Date.now()) {
   return Boolean(parseRoomLabel(customer.room).room);
 }
 
+export function isRoomOccupied(customer: TenantRecord, now = Date.now()) {
+  return getCustomerStatus(customer) !== 'booked' && isRoomCustomer(customer, now);
+}
+
 export function getRoomSummary(customers: TenantRecord[], now = Date.now()) {
-  const activeRoomCustomers = customers.filter((customer) => isRoomCustomer(customer, now));
+  const activeRoomCustomers = customers.filter((customer) => isRoomOccupied(customer, now));
   const occupiedRooms = new Set(activeRoomCustomers.map((customer) => parseRoomLabel(customer.room).room));
 
   return {
@@ -105,7 +130,7 @@ export function getRoomSummary(customers: TenantRecord[], now = Date.now()) {
 }
 
 export function getRoomOccupancy(customers: TenantRecord[], now = Date.now()) {
-  const activeRoomCustomers = customers.filter((customer) => isRoomCustomer(customer, now));
+  const activeRoomCustomers = customers.filter((customer) => isRoomOccupied(customer, now));
 
   return roomNumbers.map((room) => {
     const occupants = activeRoomCustomers.filter((customer) => parseRoomLabel(customer.room).room === room);

@@ -23,6 +23,7 @@ import { getBusinessType } from '../customers/businessTypes';
 import { getCustomerAllocationLabel } from '../customers/customerUtils';
 import {
   calculateMonthlyDues,
+  calculatePaymentResult,
   getCollectedTotal,
   getMonthDisplay,
   getMonthKey,
@@ -36,7 +37,7 @@ import {
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import { TextField } from '../../shared/components/TextField';
 import { auth, db } from '../../lib/firebase/client';
-import type { DueRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
+import type { DueRecord, MeterReadingRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
 import { money, toNumber } from '../../shared/utils/money';
 import { ExpenseDesk } from './ExpenseDesk';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
@@ -161,10 +162,6 @@ function matchesPaymentStatus(payment: PaymentRecord, filter: PaymentStatusFilte
   if (filter === 'all') return true;
 
   return getPaymentStatus(payment).toLowerCase() === filter;
-}
-
-function getBalanceTotal(payments: PaymentRecord[]) {
-  return payments.reduce((sum, payment) => sum + toNumber(payment.balance), 0);
 }
 
 function getPaymentTime(payment: PaymentRecord) {
@@ -365,7 +362,10 @@ function buildBillHtml(due: DueRecord, t: (text: string) => string) {
     documentNumber: `${t('Bill for')} ${due.month}`,
     generatedAt: new Date().toLocaleString('en-IN'),
     labels: getPdfLabels(t),
-    lineItems: [{ label: t(type.feeLabel), value: money(due.rent) }],
+    lineItems: [
+      { label: t(type.feeLabel), value: money(due.baseAmount) },
+      ...(due.meterAmount ? [{ label: t('Electricity'), value: money(due.meterAmount) }] : []),
+    ],
     meta: [
       { label: t(type.unitLabel), value: allocation },
       { label: t('Month'), value: due.month },
@@ -442,9 +442,13 @@ export function MoneyScreen() {
   const [actionError, setActionError] = useState('');
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
   const payments = useFirestoreCollection<PaymentRecord>('payments', { sortBy: 'createdAt' });
+  const meterReadings = useFirestoreCollection<MeterReadingRecord>('meterReadings', { sortBy: 'createdAt' });
   const activePayments = useMemo(() => payments.data.filter((payment) => !isVoided(payment)), [payments.data]);
 
-  const dues = useMemo(() => calculateMonthlyDues(tenants.data, activePayments, month), [activePayments, month, tenants.data]);
+  const dues = useMemo(
+    () => calculateMonthlyDues(tenants.data, activePayments, month, meterReadings.data),
+    [activePayments, meterReadings.data, month, tenants.data],
+  );
   const monthlyPayments = useMemo(
     () => activePayments.filter((payment) => matchesMonth(payment, month, ['paidOn', 'date', 'createdAt', 'updatedAt'])),
     [activePayments, month],
@@ -467,9 +471,10 @@ export function MoneyScreen() {
   const duesSummary = summarizeDues(dues);
   const visibleDuesSummary = summarizeDues(visibleDues);
   const collected = getCollectedTotal(visiblePayments);
-  const balance = getBalanceTotal(visiblePayments);
-  const loading = tenants.loading || payments.loading;
-  const error = tenants.error || payments.error;
+  const visiblePaymentTenantIds = new Set(visiblePayments.map(getPaymentTenantId));
+  const balance = dues.filter((due) => visiblePaymentTenantIds.has(due.tenantId)).reduce((sum, due) => sum + due.balance, 0);
+  const loading = tenants.loading || payments.loading || meterReadings.loading;
+  const error = tenants.error || payments.error || meterReadings.error;
   const activeFilters = view === 'dues' ? dueFilters : paymentFilters;
   const currentMonth = getMonthKey();
 
@@ -591,6 +596,8 @@ export function MoneyScreen() {
           month={month}
           onClose={() => setShowPaymentForm(false)}
           onSubmit={createPayment}
+          payments={activePayments}
+          readings={meterReadings.data}
           saving={savingPayment}
           styles={styles}
           tenants={tenants.data}
@@ -768,6 +775,8 @@ function PaymentFormSheet({
   month,
   onClose,
   onSubmit,
+  payments,
+  readings,
   saving,
   styles,
   tenants,
@@ -777,6 +786,8 @@ function PaymentFormSheet({
   month: string;
   onClose: () => void;
   onSubmit: (payload: PaymentDraft) => void;
+  payments: PaymentRecord[];
+  readings: MeterReadingRecord[];
   saving: boolean;
   styles: ReturnType<typeof createStyles>;
   tenants: TenantRecord[];
@@ -791,9 +802,12 @@ function PaymentFormSheet({
   const selectedTenant = tenants.find((tenant) => tenant.id === selectedTenantId);
   const selectedBusinessType = getBusinessType(selectedTenant?.businessType);
   const tenantRent = toNumber(selectedTenant?.rent);
+  const meterAmount = readings
+    .filter((reading) => reading.tenantId === selectedTenantId && reading.month === paymentMonth)
+    .reduce((sum, reading) => sum + toNumber(reading.billAmount), 0);
+  const totalCharge = tenantRent + meterAmount;
   const paid = toNumber(amountPaid);
-  const balance = Math.max(0, tenantRent - paid);
-  const status = tenantRent && paid >= tenantRent ? 'Paid' : paid > 0 ? 'Partial' : 'Pending';
+  const { balance, status } = calculatePaymentResult(totalCharge, payments, selectedTenantId, paymentMonth, paid);
   const tenantOptions = useMemo(
     () =>
       tenants.slice(0, 80).map((tenant) => ({
@@ -835,7 +849,7 @@ function PaymentFormSheet({
       tenantId: selectedTenant.id,
       tenantName: getTenantDisplayName(selectedTenant),
       tenantRoom: getCustomerAllocationLabel(selectedTenant),
-      totalRent: tenantRent,
+      totalRent: totalCharge,
     });
   }
 
@@ -1002,7 +1016,8 @@ function DueCard({
       </View>
 
       <View style={styles.amountGrid}>
-        <AmountCell label={t(type.feeLabel)} styles={styles} value={money(due.rent)} />
+        <AmountCell label={t(type.feeLabel)} styles={styles} value={money(due.baseAmount)} />
+        {due.meterAmount ? <AmountCell label={t('Electricity')} styles={styles} value={money(due.meterAmount)} /> : null}
         <AmountCell label={t('Paid')} styles={styles} value={money(due.paid)} />
         <AmountCell danger={due.balance > 0} label={t('Due')} styles={styles} value={money(due.balance)} />
       </View>

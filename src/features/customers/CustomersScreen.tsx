@@ -34,7 +34,7 @@ import { CustomerCard } from './CustomerCard';
 import { customerStatusOptions, getCustomerName, getCustomerStatus, getCustomerStatusGroup, matchesCustomerSearch } from './customerUtils';
 import { FilterPill } from './FilterPill';
 import { LifecycleMeterSheet, type LifecycleMeterResult } from './LifecycleMeterSheet';
-import { getRoomOccupancy, getRoomSummary, isRoomCustomer, parseRoomLabel, roomNumbers } from './roomUtils';
+import { getRoomOccupancy, getRoomSummary, parseRoomLabel, roomNumbers, staysOverlap } from './roomUtils';
 
 type CustomerDraft = {
   additionalGuests: string[];
@@ -653,7 +653,6 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
         <CustomerFormSheet
           customer={editingCustomer}
           customers={tenants.data}
-          now={now}
           onClose={() => {
             setShowForm(false);
             setEditingCustomer(null);
@@ -897,7 +896,6 @@ function getAllocationKey(value: unknown, businessType: string) {
 function CustomerFormSheet({
   customer,
   customers,
-  now,
   onClose,
   onSubmit,
   saving,
@@ -905,7 +903,6 @@ function CustomerFormSheet({
 }: {
   customer: TenantRecord | null;
   customers: TenantRecord[];
-  now: number;
   onClose: () => void;
   onSubmit: (payload: CustomerDraft) => Promise<string | void>;
   saving: boolean;
@@ -946,6 +943,7 @@ function CustomerFormSheet({
   const activeType = getBusinessType(form.businessType);
   const selectedDocument = documentTypes.find((item) => item.value === form.documentType) || documentTypes[0];
   const currentAllocation = getAllocationKey(customer?.room, form.businessType);
+  const draftStay = { id: customer?.id || 'draft', ...form } as TenantRecord;
   const allocationNumbers = form.businessType === 'library' ? [] : roomNumbers;
   const allocationOccupants = customers.filter((item) => {
     const itemType = String(item.businessType || 'pg');
@@ -953,9 +951,9 @@ function CustomerFormSheet({
       ? itemType === 'library'
       : ['pg', 'hotel'].includes(itemType);
 
-    const activelyAllocated = form.businessType === 'library'
-      ? activeAllocationStatuses.includes(getCustomerStatus(item))
-      : isRoomCustomer(item, now);
+    const activelyAllocated = activeAllocationStatuses.includes(getCustomerStatus(item))
+      && !(form.status === 'booked' && !form.moveInDate)
+      && staysOverlap(item, draftStay);
 
     return item.id !== customer?.id && sameInventory && activelyAllocated;
   });
@@ -1296,6 +1294,12 @@ function CustomerFormSheet({
       return;
     }
 
+    if (!customer && form.status === 'booked' && form.moveInDate < getLocalDate(new Date())) {
+      setFormStep('details');
+      setFormError(t('Choose today or a future date for the reservation.'));
+      return;
+    }
+
     if (!customer && form.status !== 'booked' && form.moveInDate > getLocalDate(new Date())) {
       setFormStep('details');
       setFormError(t('Choose Reserve for later when the start date is in the future.'));
@@ -1305,6 +1309,12 @@ function CustomerFormSheet({
     if (form.moveOutDate && !isValidDateText(form.moveOutDate)) {
       setFormStep('details');
       setFormError(t('Select a valid move-out date.'));
+      return;
+    }
+
+    if (form.businessType === 'hotel' && !form.moveOutDate) {
+      setFormStep('details');
+      setFormError(t('Choose a check-out date for the hotel stay.'));
       return;
     }
 

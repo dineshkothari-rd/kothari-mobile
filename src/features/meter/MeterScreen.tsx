@@ -12,11 +12,11 @@ import {
   Text,
   View,
 } from 'react-native';
-import { addDoc, collection, deleteDoc, doc, getDocs, limit, orderBy, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDocs, limit, orderBy, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
-import { db } from '../../lib/firebase/client';
+import { auth, db } from '../../lib/firebase/client';
 import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import { useRealtimeClock } from '../../shared/hooks/useRealtimeClock';
@@ -128,10 +128,16 @@ export function MeterScreen() {
     setActionError('');
 
     try {
-      await addDoc(collection(db, 'meterReadings'), {
+      const actorUid = auth.currentUser?.uid;
+      if (!actorUid) throw new Error(t('Please sign in again.'));
+      const batch = writeBatch(db);
+      const readingRef = doc(collection(db, 'meterReadings'));
+      batch.set(readingRef, {
         ...payload,
         createdAt: serverTimestamp(),
       });
+      batch.set(doc(collection(db, 'auditEvents')), { action: 'meter.created', actorUid, createdAt: serverTimestamp(), entityId: readingRef.id, entityType: 'meterReading' });
+      await batch.commit();
       setShowForm(false);
     } catch (createError) {
       setActionError(createError instanceof Error ? createError.message : t('Could not save meter reading.'));
@@ -145,7 +151,12 @@ export function MeterScreen() {
     setActionError('');
 
     try {
-      await deleteDoc(doc(db, 'meterReadings', readingId));
+      const actorUid = auth.currentUser?.uid;
+      if (!actorUid) throw new Error(t('Please sign in again.'));
+      const batch = writeBatch(db);
+      batch.delete(doc(db, 'meterReadings', readingId));
+      batch.set(doc(collection(db, 'auditEvents')), { action: 'meter.deleted', actorUid, createdAt: serverTimestamp(), entityId: readingId, entityType: 'meterReading' });
+      await batch.commit();
     } catch (deleteError) {
       setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete meter reading.'));
     } finally {
@@ -187,6 +198,8 @@ export function MeterScreen() {
     setActionError('');
 
     try {
+      const actorUid = auth.currentUser?.uid;
+      if (!actorUid) throw new Error(t('Please sign in again.'));
       const eventTime = new Date();
       const readingRef = doc(collection(db, 'meterReadings'));
       const batch = writeBatch(db);
@@ -226,6 +239,13 @@ export function MeterScreen() {
         moveOutTime: eventTime.toTimeString().slice(0, 5),
         status: 'checked out',
         updatedAt: serverTimestamp(),
+      });
+      batch.set(doc(collection(db, 'auditEvents')), {
+        action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
+        actorUid,
+        createdAt: serverTimestamp(),
+        customerId: customer.id,
+        customerName: getTenantName(customer),
       });
 
       await batch.commit();
