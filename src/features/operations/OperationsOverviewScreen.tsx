@@ -1,501 +1,221 @@
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
-import type { ExpenseRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
+import { useRealtimeClock } from '../../shared/hooks/useRealtimeClock';
+import { useLanguage } from '../../shared/i18n/LanguageProvider';
+import type { EnquiryRecord, ExpenseRecord, MeterReadingRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
 import { money } from '../../shared/utils/money';
+import { businessTypeOptions } from '../customers/businessTypes';
+import { getCustomerStatusGroup } from '../customers/customerUtils';
+import { getRoomSummary, parseRoomLabel } from '../customers/roomUtils';
 import {
   calculateMonthlyDues,
   getCollectedTotal,
-  getDayKey,
   getExpenseTotal,
   getMonthDisplay,
   getMonthKey,
-  matchesDay,
   matchesMonth,
   shiftMonth,
   summarizeDues,
 } from './operationsMath';
 import { MetricTile } from './MetricTile';
-import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
-type DashboardPeriod = 'Today' | 'Month' | 'All';
-const dashboardPeriods: DashboardPeriod[] = ['Today', 'Month', 'All'];
+const paymentDateFields = ['paidOn', 'date', 'createdAt', 'updatedAt'];
+const expenseDateFields = ['date', 'expenseDate', 'createdAt', 'updatedAt'];
+const activityDateFields = ['createdAt', 'updatedAt', 'date'];
 
-export function OperationsOverviewScreen() {
+export type OverviewDestination = 'customers' | 'money' | 'enquiries' | 'meter';
+
+export function OperationsOverviewScreen({ onNavigate }: { onNavigate: (destination: OverviewDestination) => void }) {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
   const styles = createStyles(colors);
-  const [period, setPeriod] = useState<DashboardPeriod>('Month');
-  const [selectedMonth, setSelectedMonth] = useState(getMonthKey());
-  const [selectedAction, setSelectedAction] = useState('dues');
+  const [month, setMonth] = useState(getMonthKey());
+  const now = useRealtimeClock();
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
   const payments = useFirestoreCollection<PaymentRecord>('payments', { sortBy: 'createdAt' });
   const expenses = useFirestoreCollection<ExpenseRecord>('expenses', { sortBy: 'createdAt' });
-  const enquiries = useFirestoreCollection('enquiries', { sortBy: 'createdAt' });
-  const notices = useFirestoreCollection('notices', { sortBy: 'createdAt' });
-  const meterReadings = useFirestoreCollection('meterReadings', { sortBy: 'createdAt' });
-
-  const loading =
-    tenants.loading ||
-    payments.loading ||
-    expenses.loading ||
-    enquiries.loading ||
-    notices.loading ||
-    meterReadings.loading;
-  const error =
-    tenants.error ||
-    payments.error ||
-    expenses.error ||
-    enquiries.error ||
-    notices.error ||
-    meterReadings.error;
+  const enquiries = useFirestoreCollection<EnquiryRecord>('enquiries', { sortBy: 'createdAt' });
+  const meterReadings = useFirestoreCollection<MeterReadingRecord>('meterReadings', { sortBy: 'createdAt' });
   const currentMonth = getMonthKey();
-  const reportMonth = period === 'Month' ? selectedMonth : currentMonth;
-  const today = getDayKey();
-  const paymentDateFields = ['paidOn', 'date', 'createdAt', 'updatedAt'];
-  const expenseDateFields = ['date', 'expenseDate', 'createdAt', 'updatedAt'];
-  const activityDateFields = ['createdAt', 'updatedAt', 'date'];
-  const periodPayments = period === 'All'
-    ? payments.data
-    : period === 'Today'
-      ? payments.data.filter((payment) => matchesDay(payment, today, paymentDateFields))
-      : payments.data.filter((payment) => matchesMonth(payment, reportMonth, paymentDateFields));
-  const periodExpenses = period === 'All'
-    ? expenses.data
-    : period === 'Today'
-      ? expenses.data.filter((expense) => matchesDay(expense, today, expenseDateFields))
-      : expenses.data.filter((expense) => matchesMonth(expense, reportMonth, expenseDateFields));
-  const periodEnquiries = period === 'All'
-    ? enquiries.data
-    : period === 'Today'
-      ? enquiries.data.filter((record) => matchesDay(record, today, activityDateFields))
-      : enquiries.data.filter((record) => matchesMonth(record, reportMonth, activityDateFields));
-  const periodNotices = period === 'All'
-    ? notices.data
-    : period === 'Today'
-      ? notices.data.filter((record) => matchesDay(record, today, activityDateFields))
-      : notices.data.filter((record) => matchesMonth(record, reportMonth, activityDateFields));
-  const periodMeterReadings = period === 'All'
-    ? meterReadings.data
-    : period === 'Today'
-      ? meterReadings.data.filter((record) => matchesDay(record, today, activityDateFields))
-      : meterReadings.data.filter((record) => matchesMonth(record, reportMonth, activityDateFields));
-  const dues = calculateMonthlyDues(tenants.data, payments.data, reportMonth);
+  const monthlyPayments = payments.data.filter((payment) => matchesMonth(payment, month, paymentDateFields));
+  const monthlyExpenses = expenses.data.filter((expense) => matchesMonth(expense, month, expenseDateFields));
+  const monthlyEnquiries = enquiries.data.filter((enquiry) => matchesMonth(enquiry, month, activityDateFields));
+  const monthlyReadings = meterReadings.data.filter((reading) => matchesMonth(reading, month, activityDateFields));
+  const dues = calculateMonthlyDues(tenants.data, payments.data, month);
   const duesSummary = summarizeDues(dues);
-  const collected = getCollectedTotal(periodPayments);
-  const expensesTotal = getExpenseTotal(periodExpenses);
-  const net = collected - expensesTotal;
-  const periodLabel = period === 'Today' ? today : period === 'Month' ? getMonthDisplay(reportMonth) : 'All time';
-  const quickActions = [
-    {
-      id: 'dues',
-      label: t('Collect dues'),
-      meta: `${duesSummary.pendingCount + duesSummary.partialCount} ${t('follow-ups')}`,
-      value: money(duesSummary.balance),
-      tone: colors.danger,
-    },
-    {
-      id: 'enquiries',
-      label: t('Review leads'),
-      meta: t('New enquiries'),
-      value: periodEnquiries.length,
-      tone: colors.accent,
-    },
-    {
-      id: 'meter',
-      label: t('Meter readings'),
-      meta: t('Rooms updated'),
-      value: periodMeterReadings.length,
-      tone: colors.warning,
-    },
-  ];
-  const activeAction = quickActions.find((action) => action.id === selectedAction) || quickActions[0];
+  const collected = getCollectedTotal(monthlyPayments);
+  const expenseTotal = getExpenseTotal(monthlyExpenses);
+  const net = collected - expenseTotal;
+  const activeCustomers = tenants.data.filter((customer) => getCustomerStatusGroup(customer) === 'staying');
+  const upcomingCustomers = tenants.data.filter((customer) => getCustomerStatusGroup(customer) === 'upcoming');
+  const newEnquiries = monthlyEnquiries.filter((enquiry) => String(enquiry.status || 'New').toLowerCase() === 'new');
+  const roomSummary = getRoomSummary(tenants.data, now);
+  const readPgRooms = new Set(monthlyReadings.map((reading) => parseRoomLabel(reading.tenantRoom).room).filter(Boolean));
+  const activePgRooms = new Set(
+    activeCustomers
+      .filter((customer) => String(customer.businessType || 'pg') === 'pg')
+      .map((customer) => parseRoomLabel(customer.room).room)
+      .filter(Boolean),
+  );
+  const roomsMissingReading = [...activePgRooms].filter((room) => !readPgRooms.has(room)).length;
+  const loading = tenants.loading || payments.loading || expenses.loading || enquiries.loading || meterReadings.loading;
+  const error = tenants.error || payments.error || expenses.error || enquiries.error || meterReadings.error;
+  const businessSnapshots = businessTypeOptions.map((business) => {
+    const customers = tenants.data.filter((customer) => String(customer.businessType || 'pg') === business.id);
+    const active = customers.filter((customer) => getCustomerStatusGroup(customer) === 'staying');
+    const allocations = new Set(active.map((customer) => String(customer.room || '').trim()).filter(Boolean));
+    const businessDues = summarizeDues(dues.filter((due) => due.businessType === business.id));
+
+    return { active: active.length, allocations: allocations.size, due: businessDues.balance, ...business };
+  });
 
   return (
     <View>
-      <View style={styles.introPanel}>
-        <View style={styles.introTop}>
-          <Text style={styles.kicker}>{periodLabel}</Text>
-          <View style={styles.periodSwitch}>
-            {dashboardPeriods.map((item) => (
-              <Pressable key={item} onPress={() => setPeriod(item)} style={[styles.periodItem, period === item && styles.periodItemActive]}>
-                <Text style={[styles.periodText, period === item && styles.periodTextActive]}>{t(item)}</Text>
-              </Pressable>
-            ))}
+      <View style={styles.hero}>
+        <View style={styles.heroTop}>
+          <View>
+            <Text style={styles.kicker}>{getMonthDisplay(month)}</Text>
+            <Text style={styles.heroLabel}>{t('Net')}</Text>
+          </View>
+          <View style={[styles.netBadge, net < 0 && styles.netBadgeDanger]}>
+            <Text style={[styles.netBadgeText, net < 0 && styles.netBadgeTextDanger]}>{t(net < 0 ? 'Due' : 'Cash flow')}</Text>
           </View>
         </View>
-        {period === 'Month' ? (
-          <View style={styles.monthNavigator}>
-            <Pressable accessibilityRole="button" onPress={() => setSelectedMonth((month) => shiftMonth(month, -1))} style={styles.monthButton}>
-              <Text style={styles.monthButtonText}>{t('Prev')}</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" onPress={() => setSelectedMonth(currentMonth)} style={styles.monthValue}>
-              <Text style={styles.monthValueText}>{getMonthDisplay(reportMonth)}</Text>
-              <Text style={styles.monthValueHint}>{reportMonth === currentMonth ? t('Current month') : t('Tap to reset')}</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" onPress={() => setSelectedMonth((month) => shiftMonth(month, 1))} style={styles.monthButton}>
-              <Text style={styles.monthButtonText}>{t('Next')}</Text>
-            </Pressable>
-          </View>
-        ) : null}
-        <Text style={styles.netLabel}>{t('Balance today')}</Text>
-        <Text style={styles.netValue}>{money(net)}</Text>
-        <Text style={styles.title}>{t('Today at a glance')}</Text>
-        <Text style={styles.subtitle}>
-          {t(period === 'Today'
-            ? 'Payments, expenses, and follow-ups added today.'
-            : period === 'Month'
-              ? 'Collections, dues, expenses, and follow-ups for this month.'
-              : 'All payments, expenses, and follow-ups so far.')}
-        </Text>
+        <Text adjustsFontSizeToFit minimumFontScale={0.65} numberOfLines={1} style={styles.netValue}>{money(net)}</Text>
+        <Text style={styles.heroTitle}>{t('Monthly snapshot')}</Text>
+        <Text style={styles.heroText}>{t('Collections, dues, expenses, and follow-ups for this month.')}</Text>
+        <View style={styles.monthNavigator}>
+          <Pressable accessibilityRole="button" onPress={() => setMonth((value) => shiftMonth(value, -1))} style={styles.monthButton}>
+            <Text style={styles.monthButtonText}>{t('Prev')}</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={() => setMonth(currentMonth)} style={styles.monthValue}>
+            <Text style={styles.monthValueText}>{getMonthDisplay(month)}</Text>
+            <Text style={styles.monthValueHint}>{month === currentMonth ? t('Current month') : t('Tap to reset')}</Text>
+          </Pressable>
+          <Pressable accessibilityRole="button" onPress={() => setMonth((value) => shiftMonth(value, 1))} style={styles.monthButton}>
+            <Text style={styles.monthButtonText}>{t('Next')}</Text>
+          </Pressable>
+        </View>
       </View>
 
-      {loading ? (
-        <View style={styles.statusRow}>
-          <ActivityIndicator color={colors.brand} />
-          <Text style={styles.statusText}>{t('Loading latest details')}</Text>
-        </View>
-      ) : null}
-
+      {loading ? <View style={styles.statusRow}><ActivityIndicator color={colors.brand} /><Text style={styles.statusText}>{t('Loading latest details')}</Text></View> : null}
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
 
       <View style={styles.metrics}>
-        <MetricTile label={t('Customers')} value={tenants.data.length} tone="brand" />
-        <MetricTile label={t('Expected')} value={money(duesSummary.expected)} tone="blue" />
         <MetricTile label={t('Collected')} value={money(collected)} tone="green" />
+        <MetricTile label={t('Expenses')} value={money(expenseTotal)} tone="orange" />
+        <MetricTile label={t('Expected')} value={money(duesSummary.expected)} tone="blue" />
         <MetricTile label={t('Due')} value={money(duesSummary.balance)} tone={duesSummary.balance > 0 ? 'red' : 'green'} />
-        <MetricTile label={t('Expenses')} value={money(expensesTotal)} tone="orange" />
-        <MetricTile label={t('Net')} value={money(net)} tone={net >= 0 ? 'green' : 'red'} />
       </View>
 
-      <View style={styles.actionSection}>
-        <View style={styles.sectionTitleRow}>
-          <Text style={styles.panelTitle}>{t('Next actions')}</Text>
-          <Text style={styles.sectionHint}>{t('Tap to view')}</Text>
-        </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.actionRail}>
-          {quickActions.map((action) => {
-            const active = action.id === selectedAction;
+      <View style={styles.sectionHeader}>
+        <View><Text style={styles.sectionKicker}>{t('Business')}</Text><Text style={styles.sectionTitle}>{t('Stays & seats')}</Text></View>
+        <Text style={styles.sectionMeta}>{activeCustomers.length} {t('customers')}</Text>
+      </View>
+      <View style={styles.businessGrid}>
+        {businessSnapshots.map((business) => <BusinessCard business={business} key={business.id} styles={styles} />)}
+      </View>
 
-            return (
-              <Pressable
-                accessibilityRole="button"
-                key={action.id}
-                onPress={() => setSelectedAction(action.id)}
-                style={[styles.actionCard, active && styles.actionCardActive]}
-              >
-                <View style={[styles.actionDot, { backgroundColor: action.tone }]} />
-                <Text style={[styles.actionLabel, active && styles.actionLabelActive]}>{action.label}</Text>
-                <Text style={[styles.actionValue, active && styles.actionValueActive]}>{action.value}</Text>
-                <Text style={[styles.actionMeta, active && styles.actionMetaActive]}>{action.meta}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-        <View style={styles.activeActionPanel}>
-          <Text style={styles.activeActionTitle}>{activeAction.label}</Text>
-          <Text style={styles.activeActionValue}>{activeAction.value}</Text>
-          <Text style={styles.activeActionText}>
-            {activeAction.meta}. {t('Choose another card to check a different area.')}
-          </Text>
+      <View style={styles.capacityPanel}>
+        <View style={styles.capacityCopy}><Text style={styles.panelTitle}>{t('Rooms')}</Text><Text style={styles.panelText}>{t('Available for PG or Hotel')}</Text></View>
+        <View style={styles.capacityValues}>
+          <SummaryValue label={t('Occupied')} styles={styles} value={roomSummary.occupiedRooms} />
+          <SummaryValue label={t('Available')} styles={styles} value={roomSummary.availableRooms} />
+          <SummaryValue label={t('Total')} styles={styles} value={roomSummary.totalRooms} />
         </View>
       </View>
 
-      <View style={styles.focusPanel}>
+      <View style={styles.attentionPanel}>
         <Text style={styles.panelTitle}>{t('Needs attention')}</Text>
-        <FocusRow accent={colors.danger} label={t('Outstanding dues')} styles={styles} value={`${duesSummary.pendingCount + duesSummary.partialCount} ${t('customers')}`} />
-        <FocusRow accent={colors.accent} label={`${t(period)} ${t('enquiries')}`} styles={styles} value={`${periodEnquiries.length} ${t('leads')}`} />
-        <FocusRow accent={colors.warning} label={`${t(period)} ${t('meter readings')}`} styles={styles} value={`${periodMeterReadings.length} ${t('readings')}`} />
-        <FocusRow accent={colors.brand} label={`${t(period)} ${t('notices')}`} styles={styles} value={`${periodNotices.length} ${t('notices')}`} />
+        <FocusRow accent={colors.danger} label={t('Outstanding dues')} onPress={() => onNavigate('money')} styles={styles} value={`${duesSummary.pendingCount + duesSummary.partialCount} ${t('customers')}`} />
+        <FocusRow accent={colors.copper} label={t('Upcoming')} onPress={() => onNavigate('customers')} styles={styles} value={`${upcomingCustomers.length} ${t('customers')}`} />
+        <FocusRow accent={colors.accent} label={t('New enquiries')} onPress={() => onNavigate('enquiries')} styles={styles} value={`${newEnquiries.length} ${t('leads')}`} />
+        <FocusRow accent={colors.warning} label={t('Meter readings')} onPress={() => onNavigate('meter')} styles={styles} value={`${roomsMissingReading} ${t('rooms')}`} />
       </View>
     </View>
   );
 }
 
-function FocusRow({
-  accent,
-  label,
-  styles,
-  value,
-}: {
-  accent: string;
-  label: string;
-  styles: ReturnType<typeof createStyles>;
-  value: string;
-}) {
+function BusinessCard({ business, styles }: { business: (typeof businessTypeOptions)[number] & { active: number; allocations: number; due: number }; styles: ReturnType<typeof createStyles> }) {
+  const { t } = useLanguage();
+
   return (
-    <View style={styles.focusRow}>
-      <View style={styles.focusLabelWrap}>
-        <View style={[styles.focusDot, { backgroundColor: accent }]} />
-        <Text style={styles.focusLabel}>{label}</Text>
-      </View>
-      <Text style={styles.focusValue}>{value}</Text>
+    <View style={styles.businessCard}>
+      <View style={styles.businessTop}><View style={styles.businessMark}><Text style={styles.businessMarkText}>{business.label[0]}</Text></View><Text style={styles.businessLabel}>{t(business.label)}</Text></View>
+      <Text style={styles.businessValue}>{business.active}</Text>
+      <Text style={styles.businessValueLabel}>{t('Active')}</Text>
+      <View style={styles.businessDivider} />
+      <View style={styles.businessDetail}><Text style={styles.businessDetailLabel}>{t(business.unitLabel)}</Text><Text style={styles.businessDetailValue}>{business.allocations}</Text></View>
+      <View style={styles.businessDetail}><Text style={styles.businessDetailLabel}>{t('Due')}</Text><Text style={[styles.businessDetailValue, business.due > 0 && styles.dueValue]}>{money(business.due)}</Text></View>
     </View>
   );
+}
+
+function SummaryValue({ label, styles, value }: { label: string; styles: ReturnType<typeof createStyles>; value: number }) {
+  return <View style={styles.summaryValue}><Text style={styles.summaryNumber}>{value}</Text><Text style={styles.summaryLabel}>{label}</Text></View>;
+}
+
+function FocusRow({ accent, label, onPress, styles, value }: { accent: string; label: string; onPress: () => void; styles: ReturnType<typeof createStyles>; value: string }) {
+  return <Pressable accessibilityRole="button" onPress={onPress} style={({ pressed }) => [styles.focusRow, pressed && styles.focusRowPressed]}><View style={styles.focusLabelWrap}><View style={[styles.focusDot, { backgroundColor: accent }]} /><Text style={styles.focusLabel}>{label}</Text></View><Text style={styles.focusValue}>{value}  ›</Text></Pressable>;
 }
 
 function createStyles(colors: AppColors) {
   return StyleSheet.create({
-  introPanel: {
-    backgroundColor: colors.ink,
-    borderRadius: radius.lg,
-    padding: spacing.lg,
-    ...shadow.card,
-  },
-  introTop: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  periodSwitch: {
-    backgroundColor: colors.overlaySubtle,
-    borderRadius: radius.md,
-    flexDirection: 'row',
-    padding: 3,
-  },
-  periodItem: {
-    borderRadius: radius.sm,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 6,
-  },
-  periodItemActive: {
-    backgroundColor: colors.onBrand,
-  },
-  periodText: {
-    color: colors.panelMuted,
-    fontSize: 11,
-    fontWeight: typography.weight.black,
-  },
-  periodTextActive: {
-    color: colors.ink,
-  },
-  monthNavigator: {
-    alignItems: 'center',
-    backgroundColor: colors.overlayFaint,
-    borderRadius: radius.lg,
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-    padding: spacing.sm,
-  },
-  monthButton: {
-    alignItems: 'center',
-    backgroundColor: colors.overlaySubtle,
-    borderRadius: radius.md,
-    minHeight: 38,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-  },
-  monthButtonText: {
-    color: colors.onBrand,
-    fontSize: 12,
-    fontWeight: typography.weight.black,
-  },
-  monthValue: {
-    alignItems: 'center',
-    flex: 1,
-  },
-  monthValueText: {
-    color: colors.onBrand,
-    fontSize: 15,
-    fontWeight: typography.weight.black,
-  },
-  monthValueHint: {
-    color: colors.panelMuted,
-    fontSize: 11,
-    fontWeight: typography.weight.bold,
-    marginTop: 2,
-  },
-  kicker: {
-    color: colors.panelAccent,
-    fontSize: 12,
-    fontWeight: typography.weight.black,
-    textTransform: 'uppercase',
-  },
-  netLabel: {
-    color: colors.panelSubtle,
-    fontSize: 12,
-    fontWeight: typography.weight.bold,
-    marginTop: spacing.lg,
-  },
-  netValue: {
-    color: colors.onBrand,
-    fontSize: 38,
-    fontWeight: typography.weight.black,
-    lineHeight: 44,
-    marginTop: spacing.lg,
-  },
-  title: {
-    color: colors.panelText,
-    fontSize: 18,
-    fontWeight: typography.weight.black,
-    marginTop: spacing.lg,
-  },
-  subtitle: {
-    color: colors.panelMuted,
-    fontSize: 14,
-    lineHeight: 21,
-    marginTop: spacing.sm,
-  },
-  statusRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-  },
-  statusText: {
-    color: colors.muted,
-    fontSize: 13,
-    fontWeight: typography.weight.bold,
-  },
-  errorText: {
-    backgroundColor: colors.dangerSoft,
-    borderColor: colors.danger,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    color: colors.danger,
-    fontSize: 13,
-    fontWeight: typography.weight.bold,
-    lineHeight: 19,
-    marginTop: spacing.md,
-    padding: spacing.md,
-  },
-  metrics: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: spacing.md,
-    justifyContent: 'space-between',
-    marginTop: spacing.lg,
-  },
-  actionSection: {
-    marginTop: spacing.lg,
-  },
-  sectionTitleRow: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  sectionHint: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: typography.weight.bold,
-  },
-  actionRail: {
-    gap: spacing.md,
-    paddingVertical: spacing.md,
-  },
-  actionCard: {
-    backgroundColor: colors.surface,
-    borderColor: colors.border,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    minHeight: 136,
-    padding: spacing.md,
-    width: 154,
-    ...shadow.card,
-  },
-  actionCardActive: {
-    backgroundColor: colors.ink,
-    borderColor: colors.ink,
-  },
-  actionDot: {
-    borderRadius: 99,
-    height: 10,
-    width: 10,
-  },
-  actionLabel: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: typography.weight.black,
-    marginTop: spacing.lg,
-  },
-  actionLabelActive: {
-    color: colors.onBrand,
-  },
-  actionValue: {
-    color: colors.text,
-    fontSize: 20,
-    fontWeight: typography.weight.black,
-    marginTop: spacing.sm,
-  },
-  actionValueActive: {
-    color: colors.panelText,
-  },
-  actionMeta: {
-    color: colors.muted,
-    fontSize: 12,
-    fontWeight: typography.weight.bold,
-    marginTop: 4,
-  },
-  actionMetaActive: {
-    color: colors.panelMuted,
-  },
-  activeActionPanel: {
-    backgroundColor: colors.skySoft,
-    borderRadius: radius.lg,
-    padding: spacing.md,
-  },
-  activeActionTitle: {
-    color: colors.text,
-    fontSize: 15,
-    fontWeight: typography.weight.black,
-  },
-  activeActionValue: {
-    color: colors.text,
-    fontSize: 24,
-    fontWeight: typography.weight.black,
-    marginTop: spacing.sm,
-  },
-  activeActionText: {
-    color: colors.muted,
-    fontSize: 13,
-    lineHeight: 19,
-    marginTop: 4,
-  },
-  focusPanel: {
-    backgroundColor: colors.surface,
-    borderColor: colors.borderSoft,
-    borderRadius: radius.lg,
-    borderWidth: 1,
-    marginTop: spacing.lg,
-    padding: spacing.lg,
-    ...shadow.card,
-  },
-  panelTitle: {
-    color: colors.text,
-    fontSize: 17,
-    fontWeight: typography.weight.black,
-    marginBottom: spacing.sm,
-  },
-  focusRow: {
-    alignItems: 'center',
-    borderTopColor: colors.borderSoft,
-    borderTopWidth: 1,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    minHeight: 48,
-  },
-  focusLabelWrap: {
-    alignItems: 'center',
-    flexDirection: 'row',
-    gap: spacing.sm,
-  },
-  focusDot: {
-    borderRadius: 99,
-    height: 8,
-    width: 8,
-  },
-  focusLabel: {
-    color: colors.text,
-    fontSize: 14,
-    fontWeight: typography.weight.bold,
-  },
-  focusValue: {
-    color: colors.muted,
-    fontSize: 13,
-    fontWeight: typography.weight.bold,
-  },
+    hero: { backgroundColor: colors.ink, borderRadius: radius.lg, padding: spacing.lg, ...shadow.card },
+    heroTop: { alignItems: 'flex-start', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, justifyContent: 'space-between' },
+    kicker: { color: colors.panelAccent, fontSize: 12, fontWeight: typography.weight.black, textTransform: 'uppercase' },
+    heroLabel: { color: colors.panelSubtle, fontSize: 12, fontWeight: typography.weight.bold, marginTop: spacing.sm },
+    netBadge: { backgroundColor: colors.successSoft, borderRadius: radius.sm, paddingHorizontal: spacing.sm, paddingVertical: 6 },
+    netBadgeDanger: { backgroundColor: colors.dangerSoft },
+    netBadgeText: { color: colors.success, fontSize: 11, fontWeight: typography.weight.black, textTransform: 'uppercase' },
+    netBadgeTextDanger: { color: colors.danger },
+    netValue: { color: colors.panelText, fontSize: 40, fontWeight: typography.weight.black, lineHeight: 46, marginTop: spacing.sm },
+    heroTitle: { color: colors.panelText, fontSize: 18, fontWeight: typography.weight.black, marginTop: spacing.lg },
+    heroText: { color: colors.panelMuted, fontSize: 14, lineHeight: 21, marginTop: spacing.xs },
+    monthNavigator: { alignItems: 'center', backgroundColor: colors.overlayFaint, borderRadius: radius.lg, flexDirection: 'row', gap: spacing.sm, marginTop: spacing.lg, padding: spacing.sm },
+    monthButton: { alignItems: 'center', backgroundColor: colors.overlaySubtle, borderRadius: radius.md, justifyContent: 'center', minHeight: 38, paddingHorizontal: spacing.md },
+    monthButtonText: { color: colors.onBrand, fontSize: 12, fontWeight: typography.weight.black },
+    monthValue: { alignItems: 'center', flex: 1 },
+    monthValueText: { color: colors.onBrand, fontSize: 15, fontWeight: typography.weight.black },
+    monthValueHint: { color: colors.panelMuted, fontSize: 11, fontWeight: typography.weight.bold, marginTop: 2 },
+    statusRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
+    statusText: { color: colors.muted, fontSize: 13, fontWeight: typography.weight.bold },
+    errorText: { backgroundColor: colors.dangerSoft, borderColor: colors.danger, borderRadius: radius.md, borderWidth: 1, color: colors.danger, fontSize: 13, fontWeight: typography.weight.bold, lineHeight: 19, marginTop: spacing.md, padding: spacing.md },
+    metrics: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, justifyContent: 'space-between', marginTop: spacing.lg },
+    sectionHeader: { alignItems: 'flex-end', flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, justifyContent: 'space-between', marginTop: spacing.xl },
+    sectionKicker: { color: colors.brand, fontSize: 11, fontWeight: typography.weight.black, textTransform: 'uppercase' },
+    sectionTitle: { color: colors.text, fontSize: 21, fontWeight: typography.weight.black, marginTop: 3 },
+    sectionMeta: { color: colors.muted, fontSize: 12, fontWeight: typography.weight.bold },
+    businessGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, paddingVertical: spacing.md },
+    businessCard: { backgroundColor: colors.surface, borderColor: colors.borderSoft, borderRadius: radius.lg, borderWidth: 1, flexBasis: 180, flexGrow: 1, padding: spacing.md, ...shadow.card },
+    businessTop: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm },
+    businessMark: { alignItems: 'center', backgroundColor: colors.copperSoft, borderRadius: radius.sm, height: 32, justifyContent: 'center', width: 32 },
+    businessMarkText: { color: colors.copper, fontSize: 14, fontWeight: typography.weight.black },
+    businessLabel: { color: colors.text, flexShrink: 1, fontSize: 15, fontWeight: typography.weight.black },
+    businessValue: { color: colors.text, fontSize: 30, fontWeight: typography.weight.black, marginTop: spacing.lg },
+    businessValueLabel: { color: colors.muted, fontSize: 12, fontWeight: typography.weight.bold, marginTop: 2 },
+    businessDivider: { backgroundColor: colors.borderSoft, height: 1, marginVertical: spacing.md },
+    businessDetail: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', minHeight: 26 },
+    businessDetailLabel: { color: colors.muted, fontSize: 12, fontWeight: typography.weight.bold },
+    businessDetailValue: { color: colors.text, fontSize: 13, fontWeight: typography.weight.black },
+    dueValue: { color: colors.danger },
+    capacityPanel: { backgroundColor: colors.skySoft, borderRadius: radius.lg, flexDirection: 'row', flexWrap: 'wrap', gap: spacing.md, marginTop: spacing.sm, padding: spacing.lg },
+    capacityCopy: { flexBasis: 130, flexGrow: 1 },
+    panelTitle: { color: colors.text, fontSize: 17, fontWeight: typography.weight.black },
+    panelText: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: spacing.xs },
+    capacityValues: { flexBasis: 190, flexDirection: 'row', flexGrow: 1, gap: spacing.sm, justifyContent: 'space-between' },
+    summaryValue: { alignItems: 'center', flex: 1, minWidth: 42 },
+    summaryNumber: { color: colors.text, fontSize: 20, fontWeight: typography.weight.black },
+    summaryLabel: { color: colors.muted, fontSize: 10, fontWeight: typography.weight.bold, marginTop: 3 },
+    attentionPanel: { backgroundColor: colors.surface, borderColor: colors.borderSoft, borderRadius: radius.lg, borderWidth: 1, marginTop: spacing.lg, padding: spacing.lg, ...shadow.card },
+    focusRow: { alignItems: 'center', borderTopColor: colors.borderSoft, borderTopWidth: 1, flexDirection: 'row', justifyContent: 'space-between', minHeight: 48 },
+    focusRowPressed: { opacity: 0.65 },
+    focusLabelWrap: { alignItems: 'center', flex: 1, flexDirection: 'row', gap: spacing.sm },
+    focusDot: { borderRadius: 99, height: 8, width: 8 },
+    focusLabel: { color: colors.text, flex: 1, fontSize: 14, fontWeight: typography.weight.bold },
+    focusValue: { color: colors.muted, flexShrink: 1, fontSize: 13, fontWeight: typography.weight.bold, marginLeft: spacing.sm, textAlign: 'right' },
   });
 }

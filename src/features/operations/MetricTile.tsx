@@ -28,7 +28,7 @@ export function MetricTile({ label, tone = 'brand', value }: MetricTileProps) {
           <Text style={[styles.markerText, { color: toneStyle.color }]}>{String(label).slice(0, 1)}</Text>
         </View>
       </View>
-      <Text style={styles.value} numberOfLines={1}>{value}</Text>
+      <Text adjustsFontSizeToFit minimumFontScale={0.7} style={styles.value} numberOfLines={1}>{value}</Text>
     </View>
   );
 }
@@ -40,9 +40,10 @@ function createStyles(colors: AppColors) {
     borderColor: colors.borderSoft,
     borderRadius: radius.lg,
     borderWidth: 1,
+    flexBasis: 150,
+    flexGrow: 1,
     minHeight: 118,
     padding: spacing.md,
-    width: '48%',
     ...shadow.card,
   },
   tileTop: {

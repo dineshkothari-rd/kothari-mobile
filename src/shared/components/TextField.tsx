@@ -38,13 +38,13 @@ function createStyles(colors: AppColors) {
     fontWeight: typography.weight.bold,
   },
   input: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.surfaceRaised,
     borderColor: colors.border,
     borderRadius: radius.md,
     borderWidth: 1,
     color: colors.text,
     fontSize: 16,
-    minHeight: 48,
+    minHeight: 52,
     paddingHorizontal: spacing.md,
   },
   });

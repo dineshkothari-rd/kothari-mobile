@@ -5,9 +5,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { featureModules } from '../featureModules';
 import { CustomersScreen } from '../customers/CustomersScreen';
-import { MoreScreen } from '../more/MoreScreen';
+import { MoreScreen, type MoreView } from '../more/MoreScreen';
 import { MoneyScreen } from '../money/MoneyScreen';
-import { OperationsOverviewScreen } from '../operations/OperationsOverviewScreen';
+import { OperationsOverviewScreen, type OverviewDestination } from '../operations/OperationsOverviewScreen';
 import type { AdminProfile } from '../../shared/types/admin';
 import { AppBadge } from '../../shared/components/AppBadge';
 import { ModuleCard } from '../../shared/components/ModuleCard';
@@ -16,7 +16,7 @@ import { FirestoreRefreshContext } from '../../shared/hooks/useFirestoreCollecti
 
 const primaryTabs = [
   { id: 'overview', label: 'Home', mark: 'H' },
-  { id: 'tenants', label: 'Rooms', mark: 'R' },
+  { id: 'tenants', label: 'Customers', mark: 'C' },
   { id: 'payments', label: 'Money', mark: 'M' },
   { id: 'more', label: 'More', mark: '••' },
 ];
@@ -28,6 +28,7 @@ type WorkspaceScreenProps = {
 
 export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
   const [activeTab, setActiveTab] = useState('overview');
+  const [moreView, setMoreView] = useState<MoreView>('enquiries');
   const [refreshKey, setRefreshKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const { colors } = useAppTheme();
@@ -44,6 +45,16 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
     setRefreshing(true);
     setRefreshKey((current) => current + 1);
     setTimeout(() => setRefreshing(false), 900);
+  }
+
+  function openDestination(destination: OverviewDestination) {
+    if (destination === 'customers' || destination === 'money') {
+      setActiveTab(destination === 'customers' ? 'tenants' : 'payments');
+      return;
+    }
+
+    setMoreView(destination);
+    setActiveTab('more');
   }
 
   return (
@@ -71,13 +82,13 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
           style={styles.scroller}
         >
           {activeTab === 'overview' ? (
-            <OperationsOverviewScreen />
+            <OperationsOverviewScreen onNavigate={openDestination} />
           ) : activeTab === 'tenants' ? (
             <CustomersScreen />
           ) : activeTab === 'payments' ? (
             <MoneyScreen />
           ) : activeTab === 'more' ? (
-            <MoreScreen />
+            <MoreScreen onViewChange={setMoreView} view={moreView} />
           ) : (
             <>
               <View style={styles.heroPanel}>
@@ -185,9 +196,12 @@ function createStyles(colors: AppColors) {
     fontWeight: typography.weight.black,
   },
   content: {
+    alignSelf: 'center',
     flexGrow: 1,
+    maxWidth: 960,
     padding: spacing.lg,
     paddingBottom: spacing.xl,
+    width: '100%',
   },
   scroller: {
     flex: 1,
@@ -218,6 +232,7 @@ function createStyles(colors: AppColors) {
     marginTop: spacing.lg,
   },
   footer: {
+    alignItems: 'center',
     backgroundColor: colors.surface,
     borderTopColor: colors.border,
     borderTopWidth: 1,
@@ -232,8 +247,10 @@ function createStyles(colors: AppColors) {
     borderWidth: 1,
     flexDirection: 'row',
     gap: spacing.sm,
+    maxWidth: 680,
     padding: spacing.sm,
     ...shadow.dock,
+    width: '100%',
   },
   navItem: {
     alignItems: 'center',

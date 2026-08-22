@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { radius, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
@@ -8,7 +7,7 @@ import { NoticesScreen } from '../notices/NoticesScreen';
 import { SettingsScreen } from '../settings/SettingsScreen';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
-type MoreView = 'enquiries' | 'notices' | 'meter' | 'settings';
+export type MoreView = 'enquiries' | 'notices' | 'meter' | 'settings';
 
 const moreViews: Array<{ label: string; value: MoreView }> = [
   { label: 'Enquiries', value: 'enquiries' },
@@ -17,11 +16,10 @@ const moreViews: Array<{ label: string; value: MoreView }> = [
   { label: 'Settings', value: 'settings' },
 ];
 
-export function MoreScreen() {
+export function MoreScreen({ onViewChange, view }: { onViewChange: (view: MoreView) => void; view: MoreView }) {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
   const styles = createStyles(colors);
-  const [view, setView] = useState<MoreView>('enquiries');
 
   return (
     <View>
@@ -30,7 +28,13 @@ export function MoreScreen() {
           const active = item.value === view;
 
           return (
-            <Pressable key={item.value} onPress={() => setView(item.value)} style={[styles.switchItem, active && styles.switchItemActive]}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: active }}
+              key={item.value}
+              onPress={() => onViewChange(item.value)}
+              style={[styles.switchItem, active && styles.switchItemActive]}
+            >
               <Text style={[styles.switchText, active && styles.switchTextActive]}>{t(item.label)}</Text>
             </Pressable>
           );
@@ -58,6 +62,7 @@ function createStyles(colors: AppColors) {
       borderRadius: radius.lg,
       borderWidth: 1,
       flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: spacing.sm,
       marginBottom: spacing.lg,
       padding: spacing.sm,
@@ -65,7 +70,8 @@ function createStyles(colors: AppColors) {
     switchItem: {
       alignItems: 'center',
       borderRadius: radius.md,
-      flex: 1,
+      flexBasis: 120,
+      flexGrow: 1,
       minHeight: 42,
       justifyContent: 'center',
     },

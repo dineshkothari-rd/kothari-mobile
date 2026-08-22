@@ -30,11 +30,9 @@ function AppShellContent() {
   useEffect(() => {
     SystemUI.setBackgroundColorAsync(colors.canvas).catch(() => undefined);
     if (Platform.OS === 'android') {
-      NavigationBar.setPositionAsync('relative').catch(() => undefined);
-      NavigationBar.setBackgroundColorAsync(colors.surface).catch(() => undefined);
       NavigationBar.setButtonStyleAsync(isDark ? 'light' : 'dark').catch(() => undefined);
     }
-  }, [colors.canvas, colors.surface, isDark]);
+  }, [colors.canvas, isDark]);
 
   return (
     <AppErrorBoundary>

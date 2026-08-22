@@ -610,10 +610,8 @@ function createStyles(colors: AppColors) {
       gap: spacing.lg,
     },
     hero: {
-      backgroundColor: colors.surface,
-      borderColor: colors.borderSoft,
+      backgroundColor: colors.ink,
       borderRadius: radius.lg,
-      borderWidth: 1,
       padding: spacing.lg,
       ...shadow.card,
     },
@@ -625,19 +623,19 @@ function createStyles(colors: AppColors) {
       width: '100%',
     },
     kicker: {
-      color: colors.muted,
+      color: colors.panelAccent,
       fontSize: 12,
       fontWeight: typography.weight.black,
       textTransform: 'uppercase',
     },
     title: {
-      color: colors.text,
+      color: colors.panelText,
       fontSize: 24,
       fontWeight: typography.weight.black,
       marginTop: spacing.xs,
     },
     subtitle: {
-      color: colors.muted,
+      color: colors.panelMuted,
       fontSize: 14,
       lineHeight: 21,
       marginTop: spacing.sm,
@@ -645,7 +643,7 @@ function createStyles(colors: AppColors) {
     addButton: {
       alignItems: 'center',
       alignSelf: 'stretch',
-      backgroundColor: colors.ink,
+      backgroundColor: colors.surface,
       borderRadius: radius.md,
       justifyContent: 'center',
       minHeight: 46,
@@ -653,7 +651,7 @@ function createStyles(colors: AppColors) {
       paddingVertical: spacing.sm,
     },
     addButtonText: {
-      color: colors.onBrand,
+      color: colors.text,
       fontSize: 13,
       fontWeight: typography.weight.black,
     },
@@ -663,19 +661,19 @@ function createStyles(colors: AppColors) {
       marginTop: spacing.lg,
     },
     metric: {
-      backgroundColor: colors.surfaceMuted,
+      backgroundColor: colors.overlayFaint,
       borderRadius: radius.md,
       flex: 1,
       padding: spacing.md,
     },
     metricLabel: {
-      color: colors.muted,
+      color: colors.panelMuted,
       fontSize: 11,
       fontWeight: typography.weight.black,
       textTransform: 'uppercase',
     },
     metricValue: {
-      color: colors.text,
+      color: colors.panelText,
       fontSize: 16,
       fontWeight: typography.weight.black,
       marginTop: spacing.xs,
@@ -815,7 +813,7 @@ function createStyles(colors: AppColors) {
       right: 0,
     },
     photoOverlayText: {
-      color: '#FFFFFF',
+      color: colors.onBrand,
       fontSize: 12,
       fontWeight: typography.weight.black,
       textAlign: 'center',
@@ -835,12 +833,12 @@ function createStyles(colors: AppColors) {
       flex: 1,
     },
     photoPreviewTitle: {
-      color: '#FFFFFF',
+      color: colors.onBrand,
       fontSize: 20,
       fontWeight: typography.weight.black,
     },
     photoPreviewMeta: {
-      color: '#C8D4DE',
+      color: colors.panelMuted,
       fontSize: 13,
       lineHeight: 19,
       marginTop: spacing.xs,
@@ -852,7 +850,7 @@ function createStyles(colors: AppColors) {
       paddingVertical: spacing.sm,
     },
     photoPreviewCloseText: {
-      color: '#FFFFFF',
+      color: colors.onBrand,
       fontSize: 13,
       fontWeight: typography.weight.black,
     },
@@ -861,7 +859,7 @@ function createStyles(colors: AppColors) {
       width: '100%',
     },
     photoPreviewHint: {
-      color: '#A9B8C7',
+      color: colors.panelSubtle,
       fontSize: 12,
       marginTop: spacing.md,
       textAlign: 'center',

@@ -30,14 +30,15 @@ function createStyles(colors: AppColors) {
   return StyleSheet.create({
   button: {
     alignItems: 'center',
-    backgroundColor: colors.ink,
+    backgroundColor: colors.brand,
     borderRadius: radius.md,
-    minHeight: 48,
+    minHeight: 52,
     justifyContent: 'center',
     paddingHorizontal: spacing.lg,
   },
   pressed: {
-    opacity: 0.84,
+    opacity: 0.88,
+    transform: [{ scale: 0.99 }],
   },
   loading: {
     opacity: 0.72,
