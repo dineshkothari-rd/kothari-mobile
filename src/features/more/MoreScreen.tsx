@@ -5,18 +5,22 @@ import { EnquiriesScreen } from '../enquiries/EnquiriesScreen';
 import { MeterScreen } from '../meter/MeterScreen';
 import { NoticesScreen } from '../notices/NoticesScreen';
 import { SettingsScreen } from '../settings/SettingsScreen';
+import { StaffScreen } from '../staff/StaffScreen';
+import { SupportRequestsScreen } from '../support/SupportRequestsScreen';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
-export type MoreView = 'enquiries' | 'notices' | 'meter' | 'settings';
+export type MoreView = 'enquiries' | 'notices' | 'meter' | 'requests' | 'settings' | 'team';
 
 const moreViews: Array<{ label: string; value: MoreView }> = [
   { label: 'Enquiries', value: 'enquiries' },
   { label: 'Notices', value: 'notices' },
   { label: 'Meter', value: 'meter' },
+  { label: 'Requests', value: 'requests' },
   { label: 'Settings', value: 'settings' },
+  { label: 'Team', value: 'team' },
 ];
 
-export function MoreScreen({ onViewChange, view }: { onViewChange: (view: MoreView) => void; view: MoreView }) {
+export function MoreScreen({ isAdmin, onViewChange, view }: { isAdmin: boolean; onViewChange: (view: MoreView) => void; view: MoreView }) {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
   const styles = createStyles(colors);
@@ -24,7 +28,7 @@ export function MoreScreen({ onViewChange, view }: { onViewChange: (view: MoreVi
   return (
     <View>
       <View style={styles.switcher}>
-        {moreViews.map((item) => {
+        {moreViews.filter((item) => item.value !== 'team' || isAdmin).map((item) => {
           const active = item.value === view;
 
           return (
@@ -47,6 +51,10 @@ export function MoreScreen({ onViewChange, view }: { onViewChange: (view: MoreVi
         <NoticesScreen />
       ) : view === 'meter' ? (
         <MeterScreen />
+      ) : view === 'requests' ? (
+        <SupportRequestsScreen />
+      ) : view === 'team' && isAdmin ? (
+        <StaffScreen />
       ) : (
         <SettingsScreen />
       )}

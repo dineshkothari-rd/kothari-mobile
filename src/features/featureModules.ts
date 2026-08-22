@@ -12,7 +12,7 @@ export const featureModules: FeatureModule[] = [
   {
     id: 'firebase',
     title: 'Secure login',
-    description: 'Only approved staff can open the app.',
+    description: 'Only approved accounts can open the app.',
     status: 'ready',
   },
   {

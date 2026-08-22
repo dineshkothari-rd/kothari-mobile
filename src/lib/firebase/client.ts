@@ -1,6 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { getApp, getApps, initializeApp } from 'firebase/app';
-import { getAuth, initializeAuth } from 'firebase/auth';
+import { getAuth, inMemoryPersistence, initializeAuth } from 'firebase/auth';
 // @ts-expect-error Firebase's public types omit this documented React Native export.
 import { getReactNativePersistence } from 'firebase/auth';
 import { getFirestore } from 'firebase/firestore';
@@ -21,4 +21,16 @@ function createAuth() {
 
 export const auth = createAuth();
 export const db = getFirestore(app);
+
+export function getProvisioningAuth() {
+  const provisioningApp = getApps().find(({ name }) => name === 'account-provisioning' || name === 'customer-provisioning')
+    ?? initializeApp(firebaseConfig, 'account-provisioning');
+
+  try {
+    return initializeAuth(provisioningApp, { persistence: inMemoryPersistence });
+  } catch {
+    return getAuth(provisioningApp);
+  }
+}
+
 export default app;

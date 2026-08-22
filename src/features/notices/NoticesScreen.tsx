@@ -11,19 +11,23 @@ import {
   Text,
   View,
 } from 'react-native';
-import { addDoc, collection, deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, deleteField, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { db } from '../../lib/firebase/client';
 import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
-import type { NoticeRecord } from '../../shared/types/records';
+import type { NoticeRecord, TenantRecord } from '../../shared/types/records';
 import { FilterPill } from '../customers/FilterPill';
+import { getCustomerAllocationLabel, getCustomerName } from '../customers/customerUtils';
 import { editableNoticeTypes, getNoticeType, noticeTypes } from './noticeTypes';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
 type NoticeDraft = {
+  audience: 'all' | 'customer' | 'staff';
   message: string;
+  tenantId?: string;
+  tenantName?: string;
   title: string;
   type: string;
 };
@@ -74,6 +78,7 @@ export function NoticesScreen() {
   const [deletingId, setDeletingId] = useState('');
   const [actionError, setActionError] = useState('');
   const notices = useFirestoreCollection<NoticeRecord>('notices', { sortBy: 'createdAt' });
+  const tenants = useFirestoreCollection<TenantRecord>('tenants');
   const filtered = useMemo(
     () =>
       notices.data.filter((notice) => {
@@ -108,6 +113,8 @@ export function NoticesScreen() {
       if (editingNotice) {
         await updateDoc(doc(db, 'notices', editingNotice.id), {
           ...payload,
+          tenantId: payload.tenantId || deleteField(),
+          tenantName: payload.tenantName || deleteField(),
           updatedAt: serverTimestamp(),
         });
       } else {
@@ -158,6 +165,7 @@ export function NoticesScreen() {
           onSubmit={saveNotice}
           saving={saving}
           styles={styles}
+          tenants={tenants.data}
         />
       ) : null}
 
@@ -235,18 +243,23 @@ function NoticeFormSheet({
   onSubmit,
   saving,
   styles,
+  tenants,
 }: {
   notice: NoticeRecord | null;
   onClose: () => void;
   onSubmit: (payload: NoticeDraft) => void;
   saving: boolean;
   styles: ReturnType<typeof createStyles>;
+  tenants: TenantRecord[];
 }) {
   const { t } = useLanguage();
   const [title, setTitle] = useState(notice?.title || '');
   const [message, setMessage] = useState(notice?.message || '');
   const [type, setType] = useState(notice?.type || 'info');
+  const [audience, setAudience] = useState<NoticeDraft['audience']>(notice ? notice.audience || 'staff' : 'all');
+  const [tenantId, setTenantId] = useState(notice?.tenantId || '');
   const [formError, setFormError] = useState('');
+  const selectedTenant = tenants.find((tenant) => tenant.id === tenantId);
 
   function submit() {
     if (!title.trim() || !message.trim()) {
@@ -254,8 +267,18 @@ function NoticeFormSheet({
       return;
     }
 
+    if (audience === 'customer' && !selectedTenant) {
+      setFormError(t('Select a customer first.'));
+      return;
+    }
+
     onSubmit({
+      audience,
       message: message.trim(),
+      ...(audience === 'customer' && selectedTenant ? {
+        tenantId: selectedTenant.id,
+        tenantName: getCustomerName(selectedTenant),
+      } : {}),
       title: title.trim(),
       type,
     });
@@ -278,6 +301,46 @@ function NoticeFormSheet({
             </View>
 
             {formError ? <Text style={styles.errorText}>{formError}</Text> : null}
+
+            <Text style={styles.formLabel}>{t('Audience')}</Text>
+            <View style={styles.typeRail}>
+              {[
+                { label: 'All customers', value: 'all' },
+                { label: 'One customer', value: 'customer' },
+                { label: 'Staff only', value: 'staff' },
+              ].map((item) => (
+                <FilterPill
+                  active={audience === item.value}
+                  key={item.value}
+                  label={item.label}
+                  onPress={() => {
+                    setAudience(item.value as NoticeDraft['audience']);
+                    setFormError('');
+                  }}
+                />
+              ))}
+            </View>
+
+            {audience === 'customer' ? (
+              <>
+                <Text style={styles.formLabel}>{t('Customer')}</Text>
+                {tenants.length ? (
+                  <ScrollView nestedScrollEnabled style={styles.targetPicker} contentContainerStyle={styles.targetPickerContent}>
+                    {tenants.slice(0, 80).map((tenant) => (
+                      <FilterPill
+                        active={tenantId === tenant.id}
+                        key={tenant.id}
+                        label={`${getCustomerName(tenant)} / ${getCustomerAllocationLabel(tenant)}`}
+                        onPress={() => {
+                          setTenantId(tenant.id);
+                          setFormError('');
+                        }}
+                      />
+                    ))}
+                  </ScrollView>
+                ) : <Text style={styles.formHelpText}>{t('No customers found')}</Text>}
+              </>
+            ) : null}
 
             <Text style={styles.formLabel}>{t('Type')}</Text>
             <View style={styles.typeRail}>
@@ -344,6 +407,10 @@ function NoticeCard({
       <View style={styles.cardHeader}>
         <View style={styles.cardCopy}>
           <Text style={styles.typeLabel}>{t(noticeType.label)}</Text>
+          <Text style={styles.audienceLabel}>
+            {t(notice.audience === 'all' ? 'All customers' : notice.audience === 'customer' ? 'One customer' : 'Staff only')}
+            {notice.audience === 'customer' && notice.tenantName ? ` · ${notice.tenantName}` : ''}
+          </Text>
           <Text style={styles.cardTitle}>{notice.title || t('Notice')}</Text>
         </View>
         {formatDate(notice.createdAt) ? <Text style={styles.dateText}>{formatDate(notice.createdAt)}</Text> : null}
@@ -551,6 +618,13 @@ function createStyles(colors: AppColors) {
       fontWeight: typography.weight.black,
       textTransform: 'uppercase',
     },
+    audienceLabel: {
+      color: colors.brand,
+      fontSize: 11,
+      fontWeight: typography.weight.black,
+      marginTop: spacing.xs,
+      textTransform: 'uppercase',
+    },
     cardTitle: {
       color: colors.text,
       fontSize: 16,
@@ -693,6 +767,17 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       flexWrap: 'wrap',
       gap: spacing.sm,
+    },
+    targetPicker: {
+      maxHeight: 180,
+    },
+    targetPickerContent: {
+      gap: spacing.sm,
+      paddingRight: spacing.sm,
+    },
+    formHelpText: {
+      color: colors.muted,
+      fontSize: 13,
     },
     formGrid: {
       gap: spacing.md,

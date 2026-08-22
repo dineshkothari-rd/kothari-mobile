@@ -10,13 +10,16 @@ import { useLanguage } from '../../shared/i18n/LanguageProvider';
 type SignInScreenProps = {
   error: string;
   loading: boolean;
+  onForgotPassword: (email: string) => Promise<void>;
   onSignIn: (email: string, password: string) => void;
 };
 
-export function SignInScreen({ error, loading, onSignIn }: SignInScreenProps) {
+export function SignInScreen({ error, loading, onForgotPassword, onSignIn }: SignInScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [passwordVisible, setPasswordVisible] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryMessage, setRecoveryMessage] = useState('');
   const { colors } = useAppTheme();
   const { t } = useLanguage();
   const styles = createStyles(colors);
@@ -24,6 +27,25 @@ export function SignInScreen({ error, loading, onSignIn }: SignInScreenProps) {
 
   function submit() {
     if (!loading) onSignIn(email.trim(), password);
+  }
+
+  async function recoverPassword() {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail.includes('@')) {
+      setRecoveryMessage(t('Enter your email first.'));
+      return;
+    }
+
+    setRecovering(true);
+    setRecoveryMessage('');
+    try {
+      await onForgotPassword(normalizedEmail);
+      setRecoveryMessage(t('If an account exists for this email, password reset instructions have been sent.'));
+    } catch (recoveryError) {
+      setRecoveryMessage(recoveryError instanceof Error ? recoveryError.message : t('Could not send password reset email.'));
+    } finally {
+      setRecovering(false);
+    }
   }
 
   return (
@@ -42,13 +64,13 @@ export function SignInScreen({ error, loading, onSignIn }: SignInScreenProps) {
             </View>
             <Text style={styles.eyebrow}>Kothari</Text>
             <Text style={styles.title}>{t('Welcome back')}</Text>
-            <Text style={styles.subtitle}>{t('Sign in to manage rooms, payments, and daily work.')}</Text>
+            <Text style={styles.subtitle}>{t('Sign in to manage your stay, membership, rooms, and payments.')}</Text>
           </View>
 
           <View style={styles.form}>
             <View>
               <Text style={styles.formTitle}>{t('Secure login')}</Text>
-              <Text style={styles.formSubtitle}>{t('Only approved staff can open the app.')}</Text>
+              <Text style={styles.formSubtitle}>{t('Only approved accounts can open the app.')}</Text>
             </View>
             <TextField
               autoCapitalize="none"
@@ -85,7 +107,16 @@ export function SignInScreen({ error, loading, onSignIn }: SignInScreenProps) {
               >
                 <Text style={styles.passwordToggleText}>{t(passwordVisible ? 'Hide password' : 'Show password')}</Text>
               </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                disabled={loading || recovering}
+                onPress={recoverPassword}
+                style={styles.forgotPassword}
+              >
+                <Text style={styles.passwordToggleText}>{t(recovering ? 'Sending...' : 'Forgot password?')}</Text>
+              </Pressable>
             </View>
+            {recoveryMessage ? <Text accessibilityLiveRegion="polite" style={styles.notice}>{recoveryMessage}</Text> : null}
             {error ? (
               <Text accessibilityLiveRegion="polite" style={styles.error}>
                 {t(error)}
@@ -179,6 +210,10 @@ function createStyles(colors: AppColors) {
     alignSelf: 'flex-end',
     marginTop: spacing.sm,
   },
+  forgotPassword: {
+    alignSelf: 'flex-start',
+    marginTop: spacing.sm,
+  },
   passwordToggleText: {
     color: colors.brand,
     fontSize: 13,
@@ -188,6 +223,15 @@ function createStyles(colors: AppColors) {
     backgroundColor: colors.dangerSoft,
     borderRadius: radius.md,
     color: colors.danger,
+    fontSize: 13,
+    fontWeight: typography.weight.bold,
+    lineHeight: 19,
+    padding: spacing.md,
+  },
+  notice: {
+    backgroundColor: colors.successSoft,
+    borderRadius: radius.md,
+    color: colors.success,
     fontSize: 13,
     fontWeight: typography.weight.bold,
     lineHeight: 19,

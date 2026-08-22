@@ -1,48 +1,60 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import type { AdminProfile } from '../../shared/types/admin';
-import { getAdminProfile, signInAdmin, signOutAdmin, watchAuthState } from './authService';
+import type { AppProfile } from '../../shared/types/admin';
+import { getAppProfile, refreshSignedInProfile, requestPasswordReset, sendAccountVerification, signInAccount, signOutAccount, watchAppProfile, watchAuthState } from './authService';
 
 type SessionStatus = 'checking' | 'signedOut' | 'signedIn';
 
-export function useAdminSession() {
-  const [admin, setAdmin] = useState<AdminProfile | null>(null);
+export function useAppSession() {
+  const [profile, setProfile] = useState<AppProfile | null>(null);
   const [error, setError] = useState('');
   const [status, setStatus] = useState<SessionStatus>('checking');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
+    let stopProfile: () => void = () => undefined;
     const unsubscribe = watchAuthState(async (user) => {
+      stopProfile();
       setStatus('checking');
 
       if (!user) {
-        setAdmin(null);
+        setProfile(null);
         setStatus('signedOut');
         return;
       }
 
       try {
-        const profile = await getAdminProfile(user);
+        const nextProfile = await getAppProfile(user);
 
-        if (!profile) {
-          await signOutAdmin();
-          setAdmin(null);
-          setError('Access denied. This account is not an admin.');
+        if (!nextProfile) {
+          await signOutAccount();
+          setProfile(null);
+          setError('Access denied. This account has not been approved.');
           setStatus('signedOut');
           return;
         }
 
-        setAdmin(profile);
+        setProfile(nextProfile);
         setError('');
         setStatus('signedIn');
+        stopProfile = watchAppProfile(user, (updatedProfile) => {
+          if (!updatedProfile) {
+            signOutAccount().catch(() => undefined);
+            return;
+          }
+          setProfile(updatedProfile);
+        }, () => setError('Could not refresh account access. Please try again.'));
       } catch {
-        setAdmin(null);
-        setError('Could not verify admin access. Please try again.');
+        setProfile(null);
+        setError('Could not verify account access. Please try again.');
         setStatus('signedOut');
       }
     });
 
-    return unsubscribe;
+    return () => {
+      stopProfile();
+      unsubscribe();
+    };
   }, []);
 
   const signIn = useCallback(async (email: string, password: string) => {
@@ -55,12 +67,12 @@ export function useAdminSession() {
     setError('');
 
     try {
-      const profile = await signInAdmin(email, password);
-      setAdmin(profile);
+      const nextProfile = await signInAccount(email, password);
+      setProfile(nextProfile);
       setStatus('signedIn');
     } catch (signInError) {
       setError(signInError instanceof Error ? signInError.message : 'Invalid email or password.');
-      setAdmin(null);
+      setProfile(null);
       setStatus('signedOut');
     } finally {
       setSubmitting(false);
@@ -72,24 +84,33 @@ export function useAdminSession() {
     setError('');
 
     try {
-      await signOutAdmin();
-      setAdmin(null);
+      await signOutAccount();
+      setProfile(null);
       setStatus('signedOut');
     } finally {
       setSubmitting(false);
     }
   }, []);
 
+  const refreshProfile = useCallback(async () => {
+    const nextProfile = await refreshSignedInProfile();
+    if (nextProfile) setProfile(nextProfile);
+    return Boolean(nextProfile?.emailVerified);
+  }, []);
+
   return useMemo(
     () => ({
-      admin,
+      profile,
       error,
+      refreshProfile,
+      requestPasswordReset,
+      sendAccountVerification,
       setError,
       signIn,
       signOut,
       status,
       submitting,
     }),
-    [admin, error, signIn, signOut, status, submitting],
+    [error, profile, refreshProfile, signIn, signOut, status, submitting],
   );
 }

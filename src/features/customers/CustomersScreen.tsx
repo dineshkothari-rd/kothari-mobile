@@ -15,11 +15,13 @@ import {
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
-import { addDoc, collection, deleteDoc, doc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import * as Crypto from 'expo-crypto';
+import { createUserWithEmailAndPassword, deleteUser, sendPasswordResetEmail, signOut, type User } from 'firebase/auth';
+import { addDoc, collection, doc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
-import { db } from '../../lib/firebase/client';
+import { auth, db, getProvisioningAuth } from '../../lib/firebase/client';
 import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import { useRealtimeClock } from '../../shared/hooks/useRealtimeClock';
@@ -27,8 +29,9 @@ import type { MeterReadingRecord, TenantRecord } from '../../shared/types/record
 import { toNumber } from '../../shared/utils/money';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import { businessTypeOptions, getBusinessType } from './businessTypes';
+import { getStartNowStatus } from './customerLifecycle';
 import { CustomerCard } from './CustomerCard';
-import { customerStatusOptions, getCustomerStatus, getCustomerStatusGroup, matchesCustomerSearch } from './customerUtils';
+import { customerStatusOptions, getCustomerName, getCustomerStatus, getCustomerStatusGroup, matchesCustomerSearch } from './customerUtils';
 import { FilterPill } from './FilterPill';
 import { LifecycleMeterSheet, type LifecycleMeterResult } from './LifecycleMeterSheet';
 import { getRoomOccupancy, getRoomSummary, isRoomCustomer, parseRoomLabel, roomNumbers } from './roomUtils';
@@ -94,7 +97,7 @@ const initialForm = {
   room: '',
   roomType: 'single',
   services: [] as string[],
-  status: 'booked',
+  status: 'checked in',
 };
 
 const activeAllocationStatuses = ['active', 'booked', 'checked in', 'occupied'];
@@ -136,7 +139,15 @@ function isValidTimeText(value: string) {
   return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
 }
 
-export function CustomersScreen() {
+function needsCustomerAttention(customer: TenantRecord) {
+  return getCustomerStatusGroup(customer) === 'reserved'
+    || !customer.room
+    || !customer.phone
+    || !customer.documentId
+    || !customer.idProof;
+}
+
+export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
   const styles = createStyles(colors);
@@ -153,6 +164,9 @@ export function CustomersScreen() {
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState('');
+  const [cancellingId, setCancellingId] = useState('');
+  const [invitingId, setInvitingId] = useState('');
+  const [accessChangingId, setAccessChangingId] = useState('');
   const [checkingOutId, setCheckingOutId] = useState('');
   const [checkingInId, setCheckingInId] = useState('');
   const [actionError, setActionError] = useState('');
@@ -167,9 +181,7 @@ export function CustomersScreen() {
         const statusMatches = statusFilter ? getCustomerStatusGroup(tenant) === statusFilter : true;
         const roomMode = mode === 'Rooms' ? ['pg', 'hotel'].includes(String(tenant.businessType || 'pg')) && Boolean(tenant.room) : true;
         const roomMatches = selectedRoom ? parseRoomLabel(tenant.room).room === selectedRoom : true;
-        const needsAttention = mode === 'Needs attention'
-          ? getCustomerStatusGroup(tenant) === 'upcoming' || !tenant.room
-          : true;
+        const needsAttention = mode === 'Needs attention' ? needsCustomerAttention(tenant) : true;
 
         return typeMatches && statusMatches && roomMode && roomMatches && needsAttention && matchesCustomerSearch(tenant, search);
       }),
@@ -195,6 +207,8 @@ export function CustomersScreen() {
 
   async function saveCustomer(payload: CustomerDraft) {
     const previousStatus = editingCustomer ? getCustomerStatus(editingCustomer) : '';
+    const requiresInitialMeter = !editingCustomer && payload.businessType === 'pg' && payload.status === 'checked in';
+    const savedPayload = requiresInitialMeter ? { ...payload, status: 'booked' } : payload;
     const leavingCheckedInState = ['active', 'checked in', 'occupied'].includes(previousStatus) && payload.status !== previousStatus;
     const isMeterLifecycleTransition = editingCustomer
       && String(editingCustomer.businessType || 'pg') === 'pg'
@@ -213,59 +227,91 @@ export function CustomersScreen() {
       const now = new Date();
       const localDate = getLocalDate(now);
       const localTime = now.toTimeString().slice(0, 5);
-      const lifecycleFields = payload.status === 'checked out' && previousStatus !== 'checked out'
+      const lifecycleFields = savedPayload.status === 'checked out' && previousStatus !== 'checked out'
         ? {
             checkedOutAt: serverTimestamp(),
-            moveOutDate: payload.moveOutDate || localDate,
-            moveOutTime: payload.moveOutTime || localTime,
+            moveOutDate: savedPayload.moveOutDate || localDate,
+            moveOutTime: savedPayload.moveOutTime || localTime,
           }
-        : payload.status === 'checked in' && previousStatus !== 'checked in'
+        : ['active', 'checked in', 'occupied'].includes(savedPayload.status) && !['active', 'checked in', 'occupied'].includes(previousStatus)
           ? {
               checkedInAt: serverTimestamp(),
-              moveInDate: payload.moveInDate || localDate,
-              moveInTime: payload.moveInTime || localTime,
+              moveInDate: savedPayload.moveInDate || localDate,
+              moveInTime: savedPayload.moveInTime || localTime,
             }
           : {};
 
       if (editingCustomer) {
         await updateDoc(doc(db, 'tenants', editingCustomer.id), {
-          ...payload,
+          ...savedPayload,
           ...lifecycleFields,
           updatedAt: serverTimestamp(),
         });
       } else {
-        await addDoc(collection(db, 'tenants'), {
-          ...payload,
+        const customerRef = await addDoc(collection(db, 'tenants'), {
+          ...savedPayload,
           ...lifecycleFields,
           createdAt: serverTimestamp(),
-          idProof: payload.idProof || null,
-          idProofName: payload.idProofName || null,
-          idProofSize: payload.idProofSize || 0,
-          idProofType: payload.idProofType || null,
-          idProofBack: payload.idProofBack || null,
-          idProofBackName: payload.idProofBackName || null,
-          idProofBackSize: payload.idProofBackSize || 0,
-          customerPhoto: payload.customerPhoto || null,
-          customerPhotoName: payload.customerPhotoName || null,
-          customerPhotoSize: payload.customerPhotoSize || 0,
+          idProof: savedPayload.idProof || null,
+          idProofName: savedPayload.idProofName || null,
+          idProofSize: savedPayload.idProofSize || 0,
+          idProofType: savedPayload.idProofType || null,
+          idProofBack: savedPayload.idProofBack || null,
+          idProofBackName: savedPayload.idProofBackName || null,
+          idProofBackSize: savedPayload.idProofBackSize || 0,
+          customerPhoto: savedPayload.customerPhoto || null,
+          customerPhotoName: savedPayload.customerPhotoName || null,
+          customerPhotoSize: savedPayload.customerPhotoSize || 0,
         });
+
+        if (requiresInitialMeter) {
+          setPendingMeterLifecycle({
+            action: 'check-in',
+            customer: { id: customerRef.id, ...savedPayload },
+            minimumReading: getRoomReading({ id: customerRef.id, ...savedPayload }),
+          });
+        }
       }
 
       setShowForm(false);
       setEditingCustomer(null);
     } catch (saveError) {
-      setActionError(saveError instanceof Error ? saveError.message : t('Could not save customer.'));
+      const message = saveError instanceof Error ? saveError.message : t('Could not save customer.');
+      setActionError(message);
+      return message;
     } finally {
       setSaving(false);
     }
   }
 
-  async function deleteCustomer(customerId: string) {
-    setDeletingId(customerId);
+  async function deleteCustomer(customer: TenantRecord) {
+    const actorUid = auth.currentUser?.uid;
+    if (!actorUid) {
+      setActionError(t('Please sign in again.'));
+      return;
+    }
+
+    setDeletingId(customer.id);
     setActionError('');
 
     try {
-      await deleteDoc(doc(db, 'tenants', customerId));
+      const batch = writeBatch(db);
+      if (customer.userId) {
+        batch.update(doc(db, 'users', customer.userId), {
+          accessStatus: 'revoked',
+          revokedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      batch.delete(doc(db, 'tenants', customer.id));
+      batch.set(doc(collection(db, 'auditEvents')), {
+        action: 'customer.deleted',
+        actorUid,
+        createdAt: serverTimestamp(),
+        customerId: customer.id,
+        customerName: getCustomerName(customer),
+      });
+      await batch.commit();
     } catch (deleteError) {
       setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete customer.'));
     } finally {
@@ -276,8 +322,115 @@ export function CustomersScreen() {
   function confirmDelete(customer: TenantRecord) {
     Alert.alert(t('Delete customer?'), `${t('Delete')} ${customer.name || t('this customer')}? ${t('This cannot be undone.')}`, [
       { text: t('Cancel'), style: 'cancel' },
-      { text: t('Delete'), style: 'destructive', onPress: () => deleteCustomer(customer.id) },
+      { text: t('Delete'), style: 'destructive', onPress: () => deleteCustomer(customer) },
     ]);
+  }
+
+  async function shareCustomerAccess(customer: TenantRecord) {
+    const email = customer.email?.trim().toLowerCase();
+    if (!email) {
+      Alert.alert(t('Email required'), t('Add the customer email before sharing app access.'));
+      return;
+    }
+
+    setInvitingId(customer.id);
+    setActionError('');
+
+    try {
+      if (!customer.userId) {
+        const actorUid = auth.currentUser?.uid;
+        if (!actorUid) throw new Error(t('Please sign in again.'));
+
+        const provisioningAuth = getProvisioningAuth();
+        let createdUser: User | undefined;
+
+        try {
+          const credential = await createUserWithEmailAndPassword(
+            provisioningAuth,
+            email,
+            `${Crypto.randomUUID()}Aa1!`,
+          );
+          createdUser = credential.user;
+
+          const batch = writeBatch(db);
+          batch.set(doc(db, 'users', createdUser.uid), {
+            accessStatus: 'invited',
+            createdAt: serverTimestamp(),
+            customerId: customer.id,
+            email,
+            name: customer.name || customer.fullName || customer.tenantName || '',
+            role: 'customer',
+            uid: createdUser.uid,
+            updatedAt: serverTimestamp(),
+          });
+          batch.update(doc(db, 'tenants', customer.id), {
+            accessStatus: 'invited',
+            invitedAt: serverTimestamp(),
+            invitedBy: actorUid,
+            updatedAt: serverTimestamp(),
+            userId: createdUser.uid,
+          });
+          batch.set(doc(collection(db, 'auditEvents')), {
+            action: 'customer.access_provisioned',
+            actorUid,
+            createdAt: serverTimestamp(),
+            customerId: customer.id,
+            customerName: customer.name || customer.fullName || customer.tenantName || '',
+          });
+          await batch.commit();
+        } catch (error) {
+          if (createdUser) await deleteUser(createdUser).catch(() => undefined);
+          if (error && typeof error === 'object' && 'code' in error && error.code === 'auth/email-already-in-use') {
+            throw new Error(t('This email already has an account but is not linked. Use another email.'));
+          }
+          throw error;
+        } finally {
+          await signOut(provisioningAuth).catch(() => undefined);
+        }
+      }
+
+      await sendPasswordResetEmail(auth, email);
+      Alert.alert(t('Access email sent'), `${t('Password setup instructions were sent to')} ${email}.`);
+    } catch (inviteError) {
+      const message = inviteError instanceof Error ? inviteError.message : t('Could not send customer access email.');
+      setActionError(message);
+      Alert.alert(t('Could not send access'), message);
+    } finally {
+      setInvitingId('');
+    }
+  }
+
+  async function changeCustomerAccess(customer: TenantRecord) {
+    if (!customer.userId || customer.accessStatus === 'revoked') return;
+
+    const actorUid = auth.currentUser?.uid;
+    if (!actorUid) {
+      setActionError(t('Please sign in again.'));
+      return;
+    }
+
+    const nextStatus = customer.accessStatus === 'suspended' ? 'active' : 'suspended';
+    setAccessChangingId(customer.id);
+    setActionError('');
+
+    try {
+      const batch = writeBatch(db);
+      const accessUpdate = { accessStatus: nextStatus, accessUpdatedAt: serverTimestamp(), updatedAt: serverTimestamp() };
+      batch.update(doc(db, 'users', customer.userId), accessUpdate);
+      batch.update(doc(db, 'tenants', customer.id), accessUpdate);
+      batch.set(doc(collection(db, 'auditEvents')), {
+        action: `customer.access_${nextStatus}`,
+        actorUid,
+        createdAt: serverTimestamp(),
+        customerId: customer.id,
+        customerName: getCustomerName(customer),
+      });
+      await batch.commit();
+    } catch (accessError) {
+      setActionError(accessError instanceof Error ? accessError.message : t('Could not update customer access.'));
+    } finally {
+      setAccessChangingId('');
+    }
   }
 
   function getRoomReading(customer: TenantRecord) {
@@ -311,6 +464,11 @@ export function CustomersScreen() {
     const { action, customer, minimumReading } = pendingMeterLifecycle;
     const checkingIn = action === 'check-in';
     const setBusy = checkingIn ? setCheckingInId : setCheckingOutId;
+    const actorUid = auth.currentUser?.uid;
+    if (!actorUid) {
+      setActionError(t('Please sign in again.'));
+      return;
+    }
     setBusy(customer.id);
     setActionError('');
 
@@ -356,6 +514,13 @@ export function CustomersScreen() {
         status: 'checked out',
         updatedAt: serverTimestamp(),
       });
+      batch.set(doc(collection(db, 'auditEvents')), {
+        action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
+        actorUid,
+        createdAt: serverTimestamp(),
+        customerId: customer.id,
+        customerName: customer.name || customer.fullName || customer.tenantName || '',
+      });
 
       await batch.commit();
       setPendingMeterLifecycle(null);
@@ -366,12 +531,120 @@ export function CustomersScreen() {
     }
   }
 
+  async function completeRoomLifecycle(customer: TenantRecord, action: PendingMeterLifecycle['action']) {
+    const checkingIn = action === 'check-in';
+    const setBusy = checkingIn ? setCheckingInId : setCheckingOutId;
+    const actorUid = auth.currentUser?.uid;
+
+    if (!actorUid) {
+      setActionError(t('Please sign in again.'));
+      return;
+    }
+
+    setBusy(customer.id);
+    setActionError('');
+
+    try {
+      const eventTime = new Date();
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'tenants', customer.id), checkingIn ? {
+        checkedInAt: serverTimestamp(),
+        moveInDate: getLocalDate(eventTime),
+        moveInTime: eventTime.toTimeString().slice(0, 5),
+        status: 'checked in',
+        updatedAt: serverTimestamp(),
+      } : {
+        checkedOutAt: serverTimestamp(),
+        moveOutDate: getLocalDate(eventTime),
+        moveOutTime: eventTime.toTimeString().slice(0, 5),
+        status: 'checked out',
+        updatedAt: serverTimestamp(),
+      });
+      batch.set(doc(collection(db, 'auditEvents')), {
+        action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
+        actorUid,
+        createdAt: serverTimestamp(),
+        customerId: customer.id,
+        customerName: customer.name || customer.fullName || customer.tenantName || '',
+      });
+      await batch.commit();
+    } catch (lifecycleError) {
+      setActionError(lifecycleError instanceof Error ? lifecycleError.message : t('Could not update customer lifecycle.'));
+    } finally {
+      setBusy('');
+    }
+  }
+
   function confirmCheckIn(customer: TenantRecord) {
-    startMeterLifecycle(customer, 'check-in');
+    if (String(customer.businessType || 'pg') === 'pg') {
+      startMeterLifecycle(customer, 'check-in');
+      return;
+    }
+
+    Alert.alert(t('Check in customer?'), getCustomerName(customer), [
+      { text: t('Cancel'), style: 'cancel' },
+      { text: t('Check in'), onPress: () => completeRoomLifecycle(customer, 'check-in') },
+    ]);
   }
 
   function confirmCheckOut(customer: TenantRecord) {
-    startMeterLifecycle(customer, 'check-out');
+    if (String(customer.businessType || 'pg') === 'pg') {
+      startMeterLifecycle(customer, 'check-out');
+      return;
+    }
+
+    Alert.alert(t('Check out customer?'), getCustomerName(customer), [
+      { text: t('Cancel'), style: 'cancel' },
+      { text: t('Check out'), onPress: () => completeRoomLifecycle(customer, 'check-out') },
+    ]);
+  }
+
+  async function cancelReservation(customer: TenantRecord) {
+    const actorUid = auth.currentUser?.uid;
+    if (!actorUid) {
+      setActionError(t('Please sign in again.'));
+      return;
+    }
+
+    setCancellingId(customer.id);
+    setActionError('');
+
+    try {
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'tenants', customer.id), {
+        ...(customer.userId ? { accessStatus: 'revoked', revokedAt: serverTimestamp() } : {}),
+        cancelledAt: serverTimestamp(),
+        cancelledBy: actorUid,
+        status: 'cancelled',
+        updatedAt: serverTimestamp(),
+      });
+      if (customer.userId) {
+        batch.update(doc(db, 'users', customer.userId), {
+          accessStatus: 'revoked',
+          revokedAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      }
+      batch.set(doc(collection(db, 'auditEvents')), {
+        action: 'customer.reservation_cancelled',
+        actorUid,
+        createdAt: serverTimestamp(),
+        customerId: customer.id,
+        customerName: customer.name || customer.fullName || customer.tenantName || '',
+      });
+      await batch.commit();
+    } catch (cancelError) {
+      setActionError(cancelError instanceof Error ? cancelError.message : t('Could not cancel reservation.'));
+    } finally {
+      setCancellingId('');
+    }
+  }
+
+  function confirmCancelReservation(customer: TenantRecord) {
+    Alert.alert(t('Cancel reservation?'), `${getCustomerName(customer)} · ${t('The customer record will remain in history.')}`, [
+      { text: t('Keep reservation'), style: 'cancel' },
+      { text: t('Cancel reservation'), style: 'destructive', onPress: () => cancelReservation(customer) },
+    ]);
   }
 
   return (
@@ -409,7 +682,7 @@ export function CustomersScreen() {
             <Text style={styles.title}>{tenants.data.length} {t('customers')}</Text>
             <Text style={styles.subtitle}>{t('Manage guests, members, rooms, seats, and contact details.')}</Text>
           </View>
-          <Pressable accessibilityRole="button" onPress={openCreateForm} style={styles.addButton}>
+          <Pressable accessibilityLabel={t('Add customer')} accessibilityRole="button" hitSlop={8} onPress={openCreateForm} style={styles.addButton}>
             <Text style={styles.addButtonText}>{t('Add')}</Text>
           </Pressable>
         </View>
@@ -423,45 +696,63 @@ export function CustomersScreen() {
 
       <View style={styles.modeSwitch}>
         {['All', 'Rooms', 'Needs attention'].map((item) => (
-          <Pressable key={item} onPress={() => updateMode(item)} style={[styles.modeItem, mode === item && styles.modeItemActive]}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ selected: mode === item }}
+            key={item}
+            onPress={() => updateMode(item)}
+            style={[styles.modeItem, mode === item && styles.modeItemActive]}
+          >
             <Text style={[styles.modeText, mode === item && styles.modeTextActive]}>{t(item)}</Text>
           </Pressable>
         ))}
       </View>
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.roomRail}>
-        {roomOccupancy.map((room) => {
-          const roomLabel = room.businessType === 'hotel'
-            ? 'Hotel occupied'
-            : room.businessType === 'pg'
-              ? room.availableBeds > 0 ? 'PG - 1 spot left' : 'PG full'
-              : 'Available';
+      <View style={styles.modeFeedback}>
+        <Text style={styles.modeFeedbackTitle}>
+          {t(mode === 'All' ? 'All customers' : mode === 'Rooms' ? 'Room customers' : 'Needs attention')} · {filtered.length}
+        </Text>
+        <Text style={styles.modeFeedbackText}>
+          {t(mode === 'All'
+            ? 'Everyone across PG, hotel, and library.'
+            : mode === 'Rooms'
+              ? 'PG and hotel customers assigned to rooms. Tap a room to narrow the list.'
+              : 'Reserved customers or records missing room, phone, document, or ID proof.')}
+        </Text>
+      </View>
 
-          return <Pressable
-            accessibilityRole="button"
-            key={room.room}
-            onPress={() => {
-              setMode('Rooms');
-              setSelectedRoom((current) => current === room.room ? '' : room.room);
-            }}
-            style={[
-              styles.roomCard,
-              room.status === 'Full' && styles.roomCardFull,
-              selectedRoom === room.room && styles.roomCardSelected,
-            ]}
-          >
-            <Text style={[styles.roomNumber, room.status === 'Full' && styles.roomTextFull]}>{t('Room')} {room.room}</Text>
-            <Text style={[styles.roomStatus, room.status === 'Full' && styles.roomStatusFull]}>{t(roomLabel)}</Text>
-            <Text style={[styles.roomMeta, room.status === 'Full' && styles.roomMetaFull]}>
-              {room.businessType === 'hotel'
-                ? `${t('Hotel')} / ${room.guestCount} ${t(room.guestCount === 1 ? 'guest' : 'guests')}`
-                : room.businessType === 'pg'
-                  ? `${room.occupants.length} ${t(room.occupants.length === 1 ? 'tenant' : 'tenants')}`
-                  : t('PG or Hotel')}
-            </Text>
-          </Pressable>;
-        })}
-      </ScrollView>
+      {mode === 'Rooms' ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.roomRail}>
+          {roomOccupancy.map((room) => {
+            const roomLabel = room.businessType === 'hotel'
+              ? 'Hotel occupied'
+              : room.businessType === 'pg'
+                ? room.availableBeds > 0 ? 'PG - 1 spot left' : 'PG full'
+                : 'Available';
+
+            return <Pressable
+              accessibilityRole="button"
+              key={room.room}
+              onPress={() => setSelectedRoom((current) => current === room.room ? '' : room.room)}
+              style={[
+                styles.roomCard,
+                room.status === 'Full' && styles.roomCardFull,
+                selectedRoom === room.room && styles.roomCardSelected,
+              ]}
+            >
+              <Text style={[styles.roomNumber, room.status === 'Full' && styles.roomTextFull]}>{t('Room')} {room.room}</Text>
+              <Text style={[styles.roomStatus, room.status === 'Full' && styles.roomStatusFull]}>{t(roomLabel)}</Text>
+              <Text style={[styles.roomMeta, room.status === 'Full' && styles.roomMetaFull]}>
+                {room.businessType === 'hotel'
+                  ? `${t('Hotel')} / ${room.guestCount} ${t(room.guestCount === 1 ? 'guest' : 'guests')}`
+                  : room.businessType === 'pg'
+                    ? `${room.occupants.length} ${t(room.occupants.length === 1 ? 'tenant' : 'tenants')}`
+                    : t('PG or Hotel')}
+              </Text>
+            </Pressable>;
+          })}
+        </ScrollView>
+      ) : null}
 
       {selectedRoom ? (
         <Pressable accessibilityRole="button" onPress={() => setSelectedRoom('')} style={styles.activeRoomFilter}>
@@ -517,14 +808,21 @@ export function CustomersScreen() {
         {filtered.length ? (
           filtered.slice(0, 40).map((tenant) => (
             <CustomerCard
+              accessActionLabel={tenant.accessStatus === 'suspended' ? 'Restore access' : 'Suspend access'}
+              accessChanging={accessChangingId === tenant.id}
+              cancelling={cancellingId === tenant.id}
               checkingIn={checkingInId === tenant.id}
               checkingOut={checkingOutId === tenant.id}
               customer={tenant}
               deleting={deletingId === tenant.id}
               expanded={selectedCustomerId === tenant.id}
+              inviting={invitingId === tenant.id}
               key={tenant.id}
-              onDelete={() => confirmDelete(tenant)}
+              onDelete={isAdmin ? () => confirmDelete(tenant) : undefined}
+              onCancel={() => confirmCancelReservation(tenant)}
+              onAccessChange={isAdmin && tenant.userId && tenant.accessStatus !== 'revoked' ? () => changeCustomerAccess(tenant) : undefined}
               onEdit={() => openEditForm(tenant)}
+              onInvite={isAdmin && getCustomerStatusGroup(tenant) !== 'cancelled' && tenant.accessStatus !== 'suspended' && tenant.accessStatus !== 'revoked' ? () => shareCustomerAccess(tenant) : undefined}
               onCheckIn={() => confirmCheckIn(tenant)}
               onCheckOut={() => confirmCheckOut(tenant)}
               onToggle={() => setSelectedCustomerId((current) => current === tenant.id ? '' : tenant.id)}
@@ -609,7 +907,7 @@ function CustomerFormSheet({
   customers: TenantRecord[];
   now: number;
   onClose: () => void;
-  onSubmit: (payload: CustomerDraft) => void;
+  onSubmit: (payload: CustomerDraft) => Promise<string | void>;
   saving: boolean;
   styles: ReturnType<typeof createStyles>;
 }) {
@@ -693,12 +991,14 @@ function CustomerFormSheet({
   const librarySeatLooksValid = form.businessType !== 'library' || !selectedAllocation || /^[A-Z]\d{2,3}$/.test(selectedAllocation);
   const canContinueAllocation = Boolean(form.name.trim() && form.phone.trim() && form.room.trim() && toNumber(form.rent));
   const roomLifecycleBusiness = ['pg', 'hotel'].includes(form.businessType);
-  const visibleStatusOptions = activeType.statusOptions.filter((status) => {
-    if (!roomLifecycleBusiness) return true;
-    if (status.value === form.status) return true;
-    if (!customer || getCustomerStatus(customer) === 'booked') return ['booked', 'cancelled'].includes(status.value);
-    return false;
-  });
+  const visibleStatusOptions = !customer
+    ? [
+        { label: 'Start now', value: getStartNowStatus(form.businessType) },
+        { label: 'Reserve for later', value: 'booked' },
+      ]
+    : roomLifecycleBusiness
+      ? activeType.statusOptions.filter((status) => status.value === form.status)
+      : activeType.statusOptions;
 
   function updateField(name: keyof typeof form, value: string | string[]) {
     setForm((current) => ({
@@ -711,9 +1011,11 @@ function CustomerFormSheet({
 
   function updateBusinessType(type: string) {
     const nextType = getBusinessType(type);
-    const nextStatus = nextType.statusOptions.some((status) => status.value === form.status)
+    const nextStatus = customer && nextType.statusOptions.some((status) => status.value === form.status)
       ? form.status
-      : nextType.statusOptions[0]?.value || 'active';
+      : form.status === 'booked'
+        ? 'booked'
+        : getStartNowStatus(type);
 
     setForm((current) => ({
       ...current,
@@ -928,7 +1230,7 @@ function CustomerFormSheet({
     setFormError('');
   }
 
-  function submit() {
+  async function submit() {
     const rent = toNumber(form.rent);
     const normalizedDocumentId = form.documentId.replace(/[\s-]/g, '').toUpperCase();
     const normalizedPhone = normalizePhone(form.phone);
@@ -988,6 +1290,18 @@ function CustomerFormSheet({
       return;
     }
 
+    if (!customer && form.status === 'booked' && !form.moveInDate) {
+      setFormStep('details');
+      setFormError(t('Choose a start date for the reservation.'));
+      return;
+    }
+
+    if (!customer && form.status !== 'booked' && form.moveInDate > getLocalDate(new Date())) {
+      setFormStep('details');
+      setFormError(t('Choose Reserve for later when the start date is in the future.'));
+      return;
+    }
+
     if (form.moveOutDate && !isValidDateText(form.moveOutDate)) {
       setFormStep('details');
       setFormError(t('Select a valid move-out date.'));
@@ -1024,7 +1338,7 @@ function CustomerFormSheet({
       return;
     }
 
-    onSubmit({
+    const saveError = await onSubmit({
       additionalGuests: form.businessType === 'hotel'
         ? form.additionalGuests.map((guest) => guest.trim()).filter(Boolean)
         : [],
@@ -1054,6 +1368,8 @@ function CustomerFormSheet({
       services: form.services,
       status: form.status,
     });
+
+    if (saveError) setFormError(saveError);
   }
 
   return (
@@ -1225,7 +1541,7 @@ function CustomerFormSheet({
                   <TextField keyboardType="numeric" label={activeType.feeLabel} onChangeText={(value) => updateField('rent', value)} placeholder="Amount" value={form.rent} />
                 </View>
 
-                <Text style={styles.formLabel}>{t('Status')}</Text>
+                <Text style={styles.formLabel}>{t(customer ? 'Status' : 'Onboarding')}</Text>
                 <View style={styles.sheetFilters}>
                   {visibleStatusOptions
                     .filter((item, index, list) => list.findIndex((entry) => entry.value === item.value) === index && item.value)
@@ -1233,19 +1549,16 @@ function CustomerFormSheet({
                       <FilterPill
                         active={form.status === status.value}
                         key={status.value}
-                        label={roomLifecycleBusiness
-                          ? status.value === 'booked'
-                            ? 'Upcoming'
-                            : status.value === 'cancelled'
-                              ? 'Cancelled'
-                              : ['checked out', 'inactive'].includes(status.value)
-                                ? 'Completed'
-                                : 'Staying'
-                          : status.label}
+                        label={status.label}
                         onPress={() => updateField('status', status.value)}
                       />
                     ))}
                 </View>
+                {!customer ? (
+                  <Text style={styles.inlineHelp}>
+                    {t('Start now activates the customer. PG asks for a meter photo after save. Reserve for later requires a start date.')}
+                  </Text>
+                ) : null}
               </>
             ) : null}
 
@@ -1506,10 +1819,15 @@ function createStyles(colors: AppColors) {
     marginTop: spacing.sm,
   },
   addButton: {
+    alignItems: 'center',
     backgroundColor: colors.surface,
     borderRadius: radius.md,
+    justifyContent: 'center',
+    minHeight: 44,
+    minWidth: 64,
     paddingHorizontal: spacing.md,
     paddingVertical: spacing.sm,
+    zIndex: 1,
   },
   addButtonText: {
     color: colors.text,
@@ -1616,6 +1934,25 @@ function createStyles(colors: AppColors) {
   },
   modeTextActive: {
     color: colors.onBrand,
+  },
+  modeFeedback: {
+    backgroundColor: colors.surface,
+    borderColor: colors.borderSoft,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    marginTop: spacing.sm,
+    padding: spacing.md,
+  },
+  modeFeedbackTitle: {
+    color: colors.text,
+    fontSize: 14,
+    fontWeight: typography.weight.black,
+  },
+  modeFeedbackText: {
+    color: colors.muted,
+    fontSize: 13,
+    lineHeight: 19,
+    marginTop: spacing.xs,
   },
   roomRail: {
     gap: spacing.md,

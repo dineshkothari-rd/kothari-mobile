@@ -8,20 +8,27 @@ import { getBusinessType } from './businessTypes';
 import { getCustomerName, getCustomerStatus, getCustomerStatusGroup, getCustomerStatusLabel, getCustomerSubtitle } from './customerUtils';
 
 type CustomerCardProps = {
+  accessChanging?: boolean;
+  accessActionLabel?: string;
   customer: TenantRecord;
   deleting?: boolean;
   expanded: boolean;
+  inviting?: boolean;
   onDelete?: () => void;
   onEdit?: () => void;
+  onInvite?: () => void;
   onCheckOut?: () => void;
   checkingOut?: boolean;
   onCheckIn?: () => void;
   checkingIn?: boolean;
+  cancelling?: boolean;
+  onCancel?: () => void;
+  onAccessChange?: () => void;
   onToggle: () => void;
   onViewIdProof?: () => void;
 };
 
-export function CustomerCard({ customer, checkingIn = false, checkingOut = false, deleting = false, expanded, onCheckIn, onCheckOut, onDelete, onEdit, onToggle, onViewIdProof }: CustomerCardProps) {
+export function CustomerCard({ accessActionLabel, accessChanging = false, customer, cancelling = false, checkingIn = false, checkingOut = false, deleting = false, expanded, inviting = false, onAccessChange, onCancel, onCheckIn, onCheckOut, onDelete, onEdit, onInvite, onToggle, onViewIdProof }: CustomerCardProps) {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
   const styles = createStyles(colors);
@@ -30,7 +37,8 @@ export function CustomerCard({ customer, checkingIn = false, checkingOut = false
   const additionalGuests = Array.isArray(customer.additionalGuests) ? customer.additionalGuests.filter(Boolean) : [];
   const status = getCustomerStatus(customer);
   const statusGroup = getCustomerStatusGroup(customer);
-  const usesRoomLifecycle = String(customer.businessType || 'pg') === 'pg';
+  const usesRoomLifecycle = ['pg', 'hotel'].includes(String(customer.businessType || 'pg'));
+  const requiresMeter = String(customer.businessType || 'pg') === 'pg';
   const canCheckIn = usesRoomLifecycle && status === 'booked';
   const canCheckOut = usesRoomLifecycle && ['checked in', 'occupied', 'active'].includes(status);
   const snapshotTitle = customer.businessType === 'library'
@@ -58,7 +66,7 @@ export function CustomerCard({ customer, checkingIn = false, checkingOut = false
           <Text style={styles.name}>{getCustomerName(customer)}</Text>
           <Text style={styles.subtitle}>{getCustomerSubtitle(customer)}</Text>
         </View>
-        <View style={[styles.statusPill, statusGroup === 'staying' && styles.statusPillActive, statusGroup === 'completed' && styles.statusPillCompleted]}>
+        <View style={[styles.statusPill, statusGroup === 'active' && styles.statusPillActive, statusGroup === 'completed' && styles.statusPillCompleted]}>
           <Text style={styles.statusText}>{t(getCustomerStatusLabel(customer))}</Text>
         </View>
       </View>
@@ -107,12 +115,12 @@ export function CustomerCard({ customer, checkingIn = false, checkingOut = false
 
       {canCheckIn && onCheckIn ? (
         <Pressable accessibilityRole="button" disabled={checkingIn} onPress={onCheckIn} style={styles.lifecycleAction}>
-          <Text style={styles.lifecycleActionText}>{t(checkingIn ? 'Checking in...' : 'Check in with meter photo')}</Text>
+          <Text style={styles.lifecycleActionText}>{t(checkingIn ? 'Checking in...' : requiresMeter ? 'Check in with meter photo' : 'Check in')}</Text>
         </Pressable>
       ) : null}
       {canCheckOut && onCheckOut ? (
         <Pressable accessibilityRole="button" disabled={checkingOut} onPress={onCheckOut} style={styles.lifecycleAction}>
-          <Text style={styles.lifecycleActionText}>{t(checkingOut ? 'Checking out...' : 'Check out with meter photo')}</Text>
+          <Text style={styles.lifecycleActionText}>{t(checkingOut ? 'Checking out...' : requiresMeter ? 'Check out with meter photo' : 'Check out')}</Text>
         </Pressable>
       ) : null}
 
@@ -126,6 +134,9 @@ export function CustomerCard({ customer, checkingIn = false, checkingOut = false
           <Text style={styles.expandedText}>
             {services.length ? `${services.join(', ')} ${t('included.')}` : t('No services added yet.')}
           </Text>
+          {customer.userId ? (
+            <Text style={styles.expandedText}>{t('App access')}: {t(`${String(customer.accessStatus || 'invited').charAt(0).toUpperCase()}${String(customer.accessStatus || 'invited').slice(1)}`)}</Text>
+          ) : null}
           <View style={styles.expandedActions}>
             <Pressable accessibilityRole="button" disabled={!customer.phone} onPress={callCustomer} style={styles.expandedAction}>
               <Text style={styles.expandedActionText}>{t('Call')}</Text>
@@ -135,7 +146,22 @@ export function CustomerCard({ customer, checkingIn = false, checkingOut = false
                 <Text style={styles.expandedActionText}>{t('Edit')}</Text>
               </Pressable>
             ) : null}
+            {onInvite ? (
+              <Pressable accessibilityRole="button" disabled={inviting} onPress={onInvite} style={[styles.expandedAction, inviting && styles.disabledAction]}>
+                <Text style={styles.expandedActionText}>{t(inviting ? 'Sending access...' : customer.userId ? 'Resend access email' : 'Send access email')}</Text>
+              </Pressable>
+            ) : null}
+            {onAccessChange && accessActionLabel ? (
+              <Pressable accessibilityRole="button" disabled={accessChanging} onPress={onAccessChange} style={[styles.expandedAction, accessChanging && styles.disabledAction]}>
+                <Text style={styles.expandedActionText}>{t(accessChanging ? customer.accessStatus === 'suspended' ? 'Restoring access...' : 'Suspending access...' : accessActionLabel)}</Text>
+              </Pressable>
+            ) : null}
           </View>
+          {statusGroup === 'reserved' && onCancel ? (
+            <Pressable accessibilityRole="button" disabled={cancelling} onPress={onCancel} style={[styles.deleteAction, cancelling && styles.disabledAction]}>
+              <Text style={styles.deleteActionText}>{t(cancelling ? 'Cancelling...' : 'Cancel reservation')}</Text>
+            </Pressable>
+          ) : null}
           {onDelete ? (
             <Pressable accessibilityRole="button" disabled={deleting} onPress={onDelete} style={[styles.deleteAction, deleting && styles.disabledAction]}>
               <Text style={styles.deleteActionText}>{t(deleting ? 'Deleting...' : 'Delete customer')}</Text>
@@ -400,6 +426,7 @@ function createStyles(colors: AppColors) {
   },
   expandedActions: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: spacing.sm,
     marginTop: spacing.md,
   },

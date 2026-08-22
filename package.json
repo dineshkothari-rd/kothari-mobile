@@ -5,8 +5,9 @@
   "dependencies": {
     "@infinitered/react-native-mlkit-text-recognition": "^5.0.1",
     "@react-native-async-storage/async-storage": "^2.2.0",
-    "expo": "~54.0.0",
-    "expo-file-system": "~19.0.23",
+    "expo": "~54.0.37",
+    "expo-crypto": "~15.0.9",
+    "expo-file-system": "~19.0.24",
     "expo-image": "~3.0.11",
     "expo-image-manipulator": "~14.0.8",
     "expo-image-picker": "~17.0.11",
@@ -23,7 +24,7 @@
   "devDependencies": {
     "@babel/core": "^7.25.2",
     "@types/react": "~19.1.0",
-    "typescript": "~5.8.3"
+    "typescript": "~5.9.2"
   },
   "scripts": {
     "start": "expo start",
@@ -33,6 +34,9 @@
   },
   "engines": {
     "node": ">=20.19.0"
+  },
+  "overrides": {
+    "expo-image": "$expo-image"
   },
   "private": true
 }
