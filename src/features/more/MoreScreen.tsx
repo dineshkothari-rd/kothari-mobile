@@ -6,14 +6,16 @@ import { MeterScreen } from '../meter/MeterScreen';
 import { NoticesScreen } from '../notices/NoticesScreen';
 import { SettingsScreen } from '../settings/SettingsScreen';
 import { StaffScreen } from '../staff/StaffScreen';
+import { SupportRequestsScreen } from '../support/SupportRequestsScreen';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
-export type MoreView = 'enquiries' | 'notices' | 'meter' | 'settings' | 'team';
+export type MoreView = 'enquiries' | 'notices' | 'meter' | 'requests' | 'settings' | 'team';
 
 const moreViews: Array<{ label: string; value: MoreView }> = [
   { label: 'Enquiries', value: 'enquiries' },
   { label: 'Notices', value: 'notices' },
   { label: 'Meter', value: 'meter' },
+  { label: 'Requests', value: 'requests' },
   { label: 'Settings', value: 'settings' },
   { label: 'Team', value: 'team' },
 ];
@@ -49,6 +51,8 @@ export function MoreScreen({ isAdmin, onViewChange, view }: { isAdmin: boolean; 
         <NoticesScreen />
       ) : view === 'meter' ? (
         <MeterScreen />
+      ) : view === 'requests' ? (
+        <SupportRequestsScreen />
       ) : view === 'team' && isAdmin ? (
         <StaffScreen />
       ) : (

@@ -190,6 +190,26 @@ service cloud.firestore {
       allow read, write: if staff();
     }
 
+    match /supportRequests/{requestId} {
+      allow read: if staff()
+        || (customerAccessAllowed() && resource.data.customerId == customerId());
+      allow create: if customerAccessAllowed()
+        && request.resource.data.customerId == customerId()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.type in ['issue', 'profile_correction']
+        && request.resource.data.status == 'open'
+        && request.resource.data.message is string
+        && request.resource.data.message.size() > 0;
+      allow update: if staff()
+        && request.resource.data.status in ['open', 'in_progress', 'resolved']
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['response', 'status', 'updatedAt', 'updatedBy'])
+        && (request.resource.data.status != 'resolved'
+          || (request.resource.data.response is string && request.resource.data.response.size() > 0));
+      allow delete: if false;
+    }
+
     match /auditEvents/{eventId} {
       allow read: if admin();
       allow create: if staff() && request.resource.data.actorUid == request.auth.uid;

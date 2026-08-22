@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { collection, doc, onSnapshot, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
+import { addDoc, collection, doc, onSnapshot, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
-import { db } from '../../lib/firebase/client';
+import { auth, db } from '../../lib/firebase/client';
+import { TextField } from '../../shared/components/TextField';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import type { CustomerProfile } from '../../shared/types/admin';
-import type { NoticeRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
+import type { NoticeRecord, PaymentRecord, SupportRequestRecord, TenantRecord } from '../../shared/types/records';
 import { money } from '../../shared/utils/money';
 import { getBusinessType } from '../customers/businessTypes';
 import { getCustomerAllocationLabel, getCustomerName, getCustomerStatusGroup, getCustomerStatusLabel } from '../customers/customerUtils';
 import { calculateMonthlyDues, getMonthDisplay, getMonthKey, getPaymentAmount, isVoided } from '../operations/operationsMath';
+import { buildReceiptHtml, downloadPdf } from '../money/MoneyScreen';
 import { mergeCustomerNotices } from './customerNotices';
 
 type CustomerData = {
@@ -20,6 +22,7 @@ type CustomerData = {
   loading: boolean;
   notices: NoticeRecord[];
   payments: PaymentRecord[];
+  requests: SupportRequestRecord[];
   refresh: () => void;
   refreshing: boolean;
 };
@@ -29,7 +32,12 @@ export function CustomerWorkspaceScreen({ onSignOut, profile }: { onSignOut: () 
   const { t } = useLanguage();
   const styles = createStyles(colors);
   const insets = useSafeAreaInsets();
-  const { customer, error, loading, notices, payments, refresh, refreshing } = useCustomerData(profile.customerId);
+  const { customer, error, loading, notices, payments, refresh, refreshing, requests } = useCustomerData(profile.customerId);
+  const [requestType, setRequestType] = useState<'issue' | 'profile_correction'>('issue');
+  const [requestMessage, setRequestMessage] = useState('');
+  const [requestBusy, setRequestBusy] = useState(false);
+  const [actionError, setActionError] = useState('');
+  const [receiptBusyId, setReceiptBusyId] = useState('');
   const month = getMonthKey();
   const isStaying = customer ? getCustomerStatusGroup(customer) === 'active' : false;
   const due = useMemo(
@@ -37,6 +45,49 @@ export function CustomerWorkspaceScreen({ onSignOut, profile }: { onSignOut: () 
     [customer, isStaying, month, payments],
   );
   const business = getBusinessType(customer?.businessType);
+
+  async function shareReceipt(payment: PaymentRecord) {
+    if (!customer) return;
+    setReceiptBusyId(payment.id);
+    setActionError('');
+    try {
+      await downloadPdf({
+        fileName: `kothari-receipt-${payment.id}.pdf`,
+        html: buildReceiptHtml(payment, [customer], t),
+        title: t('Payment receipt'),
+      });
+    } catch (receiptError) {
+      setActionError(receiptError instanceof Error ? receiptError.message : t('Could not prepare receipt.'));
+    } finally {
+      setReceiptBusyId('');
+    }
+  }
+
+  async function submitRequest() {
+    const message = requestMessage.trim();
+    const actorUid = auth.currentUser?.uid;
+    if (!message) return setActionError(t('Describe what you need help with.'));
+    if (!actorUid || !customer) return setActionError(t('Please sign in again.'));
+
+    setRequestBusy(true);
+    setActionError('');
+    try {
+      await addDoc(collection(db, 'supportRequests'), {
+        createdAt: serverTimestamp(),
+        createdBy: actorUid,
+        customerId: profile.customerId,
+        customerName: getCustomerName(customer),
+        message,
+        status: 'open',
+        type: requestType,
+      });
+      setRequestMessage('');
+    } catch (requestError) {
+      setActionError(requestError instanceof Error ? requestError.message : t('Could not send request.'));
+    } finally {
+      setRequestBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (profile.accessStatus !== 'invited') return;
@@ -67,6 +118,7 @@ export function CustomerWorkspaceScreen({ onSignOut, profile }: { onSignOut: () 
       >
         {loading ? <View style={styles.status}><ActivityIndicator color={colors.brand} /><Text style={styles.statusText}>{t('Loading latest details')}</Text></View> : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
+        {actionError ? <Text style={styles.error}>{actionError}</Text> : null}
 
         {customer ? (
           <>
@@ -102,7 +154,12 @@ export function CustomerWorkspaceScreen({ onSignOut, profile }: { onSignOut: () 
                     <Text style={styles.rowTitle}>{String(payment.month || payment.paidOn || t('Payment'))}</Text>
                     <Text style={styles.rowMeta}>{String(payment.status || t('Paid'))}</Text>
                   </View>
-                  <Text style={styles.rowValue}>{money(getPaymentAmount(payment))}</Text>
+                  <View style={styles.paymentAction}>
+                    <Text style={styles.rowValue}>{money(getPaymentAmount(payment))}</Text>
+                    <Pressable disabled={receiptBusyId === payment.id} onPress={() => shareReceipt(payment)}>
+                      <Text style={styles.receiptLink}>{t(receiptBusyId === payment.id ? 'Preparing...' : 'Receipt')}</Text>
+                    </Pressable>
+                  </View>
                 </View>
               )) : <Text style={styles.emptyText}>{t('No payments recorded yet.')}</Text>}
             </View>
@@ -118,6 +175,37 @@ export function CustomerWorkspaceScreen({ onSignOut, profile }: { onSignOut: () 
                   <Text style={styles.noticeText}>{String(notice.message || '')}</Text>
                 </View>
               )) : <Text style={styles.emptyText}>{t('No notices found')}</Text>}
+            </View>
+
+            <View style={styles.sectionHeader}>
+              <Text style={styles.sectionTitle}>{t('Help requests')}</Text>
+              <Text style={styles.sectionMeta}>{requests.length}</Text>
+            </View>
+            <View style={styles.helpCard}>
+              <View style={styles.requestTypes}>
+                {([
+                  { label: 'Support issue', value: 'issue' },
+                  { label: 'Profile correction', value: 'profile_correction' },
+                ] as const).map((item) => (
+                  <Pressable key={item.value} onPress={() => setRequestType(item.value)} style={[styles.requestType, requestType === item.value && styles.requestTypeActive]}>
+                    <Text style={[styles.requestTypeText, requestType === item.value && styles.requestTypeTextActive]}>{t(item.label)}</Text>
+                  </Pressable>
+                ))}
+              </View>
+              <TextField multiline label="How can we help?" numberOfLines={4} onChangeText={setRequestMessage} placeholder="Describe the issue or correction..." style={styles.messageInput} textAlignVertical="top" value={requestMessage} />
+              <Pressable disabled={requestBusy} onPress={submitRequest} style={[styles.submitRequest, requestBusy && styles.disabled]}>
+                <Text style={styles.submitRequestText}>{t(requestBusy ? 'Sending...' : 'Send request')}</Text>
+              </Pressable>
+              {requests.slice(0, 3).map((request) => (
+                <View key={request.id} style={styles.requestRow}>
+                  <View style={styles.rowCopy}>
+                    <Text style={styles.rowTitle}>{t(request.type === 'profile_correction' ? 'Profile correction' : 'Support issue')}</Text>
+                    <Text numberOfLines={2} style={styles.rowMeta}>{request.message}</Text>
+                    {request.response ? <Text numberOfLines={3} style={styles.requestResponse}>{request.response}</Text> : null}
+                  </View>
+                  <Text style={styles.requestStatus}>{t(request.status === 'in_progress' ? 'In progress' : request.status === 'resolved' ? 'Resolved' : 'Open')}</Text>
+                </View>
+              ))}
             </View>
           </>
         ) : !loading ? (
@@ -135,6 +223,7 @@ function useCustomerData(customerId: string): CustomerData {
   const [customer, setCustomer] = useState<TenantRecord | null>(null);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [notices, setNotices] = useState<NoticeRecord[]>([]);
+  const [requests, setRequests] = useState<SupportRequestRecord[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -171,16 +260,20 @@ function useCustomerData(customerId: string): CustomerData {
       directNotices = snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as NoticeRecord));
       updateNotices();
     }, (snapshotError) => setError(snapshotError.message));
+    const stopRequests = onSnapshot(query(collection(db, 'supportRequests'), where('customerId', '==', customerId)), (snapshot) => {
+      setRequests(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as SupportRequestRecord)).sort((a, b) => Number(b.createdAt?.seconds || 0) - Number(a.createdAt?.seconds || 0)));
+    }, (snapshotError) => setError(snapshotError.message));
 
     return () => {
       stopCustomer();
       stopPayments();
       stopBroadcastNotices();
       stopDirectNotices();
+      stopRequests();
     };
   }, [customerId, refreshKey]);
 
-  return { customer, error, loading, notices, payments, refresh, refreshing };
+  return { customer, error, loading, notices, payments, refresh, refreshing, requests };
 }
 
 function DetailRow({ label, styles, value }: { label: string; styles: ReturnType<typeof createStyles>; value: string }) {
@@ -225,10 +318,25 @@ function createStyles(colors: AppColors) {
     rowTitle: { color: colors.text, fontSize: 14, fontWeight: typography.weight.black },
     rowMeta: { color: colors.muted, fontSize: 12, marginTop: 3 },
     rowValue: { color: colors.success, fontSize: 15, fontWeight: typography.weight.black },
+    paymentAction: { alignItems: 'flex-end', gap: spacing.xs },
+    receiptLink: { color: colors.brand, fontSize: 12, fontWeight: typography.weight.black },
     notice: { paddingVertical: spacing.md },
     noticeText: { color: colors.muted, fontSize: 13, lineHeight: 19, marginTop: spacing.xs },
     emptyState: { alignItems: 'center', backgroundColor: colors.surface, borderRadius: radius.lg, marginTop: spacing.lg, padding: spacing.xl },
     emptyTitle: { color: colors.text, fontSize: 20, fontWeight: typography.weight.black },
     emptyText: { color: colors.muted, fontSize: 13, lineHeight: 20, paddingVertical: spacing.lg, textAlign: 'center' },
+    helpCard: { backgroundColor: colors.surface, borderColor: colors.borderSoft, borderRadius: radius.lg, borderWidth: 1, padding: spacing.lg, ...shadow.card },
+    requestTypes: { flexDirection: 'row', gap: spacing.sm, marginBottom: spacing.md },
+    requestType: { backgroundColor: colors.surfaceRaised, borderRadius: radius.md, flex: 1, padding: spacing.sm },
+    requestTypeActive: { backgroundColor: colors.ink },
+    requestTypeText: { color: colors.muted, fontSize: 12, fontWeight: typography.weight.black, textAlign: 'center' },
+    requestTypeTextActive: { color: colors.onBrand },
+    messageInput: { minHeight: 96, paddingTop: spacing.md },
+    submitRequest: { alignItems: 'center', backgroundColor: colors.brand, borderRadius: radius.md, marginTop: spacing.md, padding: spacing.md },
+    submitRequestText: { color: colors.onBrand, fontSize: 13, fontWeight: typography.weight.black },
+    disabled: { opacity: 0.55 },
+    requestRow: { alignItems: 'center', borderTopColor: colors.borderSoft, borderTopWidth: 1, flexDirection: 'row', gap: spacing.md, marginTop: spacing.md, paddingTop: spacing.md },
+    requestStatus: { color: colors.brand, fontSize: 11, fontWeight: typography.weight.black },
+    requestResponse: { color: colors.success, fontSize: 12, lineHeight: 18, marginTop: spacing.xs },
   });
 }

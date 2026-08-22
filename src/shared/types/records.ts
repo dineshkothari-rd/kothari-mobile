@@ -124,6 +124,19 @@ export type NoticeRecord = FirestoreRecord & {
   type?: string;
 };
 
+export type SupportRequestRecord = FirestoreRecord & {
+  createdAt?: { seconds?: number; toDate?: () => Date };
+  createdBy?: string;
+  customerId?: string;
+  customerName?: string;
+  message?: string;
+  response?: string;
+  status?: 'in_progress' | 'open' | 'resolved';
+  type?: 'issue' | 'profile_correction';
+  updatedAt?: { seconds?: number; toDate?: () => Date };
+  updatedBy?: string;
+};
+
 export type MeterReadingRecord = FirestoreRecord & {
   billAmount?: number | string;
   currentReading?: number | string;

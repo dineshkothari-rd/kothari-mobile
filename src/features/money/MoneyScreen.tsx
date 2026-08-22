@@ -377,7 +377,7 @@ function buildBillHtml(due: DueRecord, t: (text: string) => string) {
   });
 }
 
-function buildReceiptHtml(payment: PaymentRecord, tenants: TenantRecord[], t: (text: string) => string) {
+export function buildReceiptHtml(payment: PaymentRecord, tenants: TenantRecord[], t: (text: string) => string) {
   const businessType = getPaymentBusinessType(payment, tenants);
   const type = getBusinessType(businessType);
   const title = getDocumentTitle(businessType, 'receipt', t);
@@ -405,7 +405,7 @@ function buildReceiptHtml(payment: PaymentRecord, tenants: TenantRecord[], t: (t
   });
 }
 
-async function downloadPdf({ fileName, html, title }: { fileName: string; html: string; title: string }) {
+export async function downloadPdf({ fileName, html, title }: { fileName: string; html: string; title: string }) {
   const { uri } = await Print.printToFileAsync({ base64: false, html });
   const generatedFile = new File(uri);
   const namedFile = new File(Paths.cache, fileName);
