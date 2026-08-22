@@ -78,6 +78,7 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
         <ScrollView
           alwaysBounceVertical
           contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom, spacing.xl) }]}
+          keyboardShouldPersistTaps="handled"
           refreshControl={<RefreshControl colors={[colors.brand]} onRefresh={refreshPage} refreshing={refreshing} tintColor={colors.brand} />}
           style={styles.scroller}
         >

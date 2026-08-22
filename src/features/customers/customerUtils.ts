@@ -1,10 +1,11 @@
 import type { TenantRecord } from '../../shared/types/records';
 import { getBusinessType } from './businessTypes';
+import { getLifecycleGroup, getLifecycleLabel } from './customerLifecycle';
 
 export const customerStatusOptions = [
   { label: 'All', value: '' },
-  { label: 'Upcoming', value: 'upcoming' },
-  { label: 'Staying', value: 'staying' },
+  { label: 'Reserved', value: 'reserved' },
+  { label: 'Active', value: 'active' },
   { label: 'Completed', value: 'completed' },
   { label: 'Cancelled', value: 'cancelled' },
 ];
@@ -18,21 +19,11 @@ export function getCustomerStatus(customer: TenantRecord) {
 }
 
 export function getCustomerStatusGroup(customer: TenantRecord) {
-  const status = getCustomerStatus(customer);
-
-  if (status === 'booked') return 'upcoming';
-  if (['checked out', 'inactive'].includes(status)) return 'completed';
-  if (status === 'cancelled') return 'cancelled';
-  return 'staying';
+  return getLifecycleGroup(getCustomerStatus(customer));
 }
 
 export function getCustomerStatusLabel(customer: TenantRecord) {
-  const group = getCustomerStatusGroup(customer);
-
-  if (group === 'upcoming') return 'Upcoming';
-  if (group === 'completed') return 'Completed';
-  if (group === 'cancelled') return 'Cancelled';
-  return 'Staying';
+  return getLifecycleLabel(getCustomerStatus(customer), customer.businessType);
 }
 
 export function matchesCustomerSearch(customer: TenantRecord, search: string) {

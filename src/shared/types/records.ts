@@ -10,6 +10,7 @@ export type TenantRecord = FirestoreRecord & {
   documentType?: string;
   fullName?: string;
   email?: string;
+  accessStatus?: 'invited';
   idProof?: string | null;
   idProofName?: string | null;
   idProofSize?: number;
@@ -49,6 +50,7 @@ export type TenantRecord = FirestoreRecord & {
   checkoutTime?: string;
   endDate?: string;
   tenantName?: string;
+  userId?: string;
 };
 
 export type PaymentRecord = FirestoreRecord & {
@@ -76,6 +78,8 @@ export type PaymentRecord = FirestoreRecord & {
   date?: string;
   note?: string;
   businessType?: string;
+  voidedAt?: { seconds?: number; toDate?: () => Date };
+  voidedBy?: string;
 };
 
 export type ExpenseRecord = FirestoreRecord & {
@@ -88,6 +92,9 @@ export type ExpenseRecord = FirestoreRecord & {
   name?: string;
   title?: string;
   total?: number | string;
+  status?: string;
+  voidedAt?: { seconds?: number; toDate?: () => Date };
+  voidedBy?: string;
 };
 
 export type EnquiryRecord = FirestoreRecord & {
@@ -105,11 +112,14 @@ export type EnquiryRecord = FirestoreRecord & {
 };
 
 export type NoticeRecord = FirestoreRecord & {
+  audience?: 'all' | 'customer' | 'staff';
   createdAt?: {
     seconds?: number;
     toDate?: () => Date;
   };
   message?: string;
+  tenantId?: string;
+  tenantName?: string;
   title?: string;
   type?: string;
 };

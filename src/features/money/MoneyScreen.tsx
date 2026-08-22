@@ -15,7 +15,7 @@ import {
 import { File, Paths } from 'expo-file-system';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
-import { addDoc, collection, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { FilterPill } from '../customers/FilterPill';
@@ -28,13 +28,14 @@ import {
   getMonthKey,
   getPaymentAmount,
   getPaymentTenantId,
+  isVoided,
   matchesMonth,
   shiftMonth,
   summarizeDues,
 } from '../operations/operationsMath';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import { TextField } from '../../shared/components/TextField';
-import { db } from '../../lib/firebase/client';
+import { auth, db } from '../../lib/firebase/client';
 import type { DueRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
 import { money, toNumber } from '../../shared/utils/money';
 import { ExpenseDesk } from './ExpenseDesk';
@@ -441,11 +442,12 @@ export function MoneyScreen() {
   const [actionError, setActionError] = useState('');
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
   const payments = useFirestoreCollection<PaymentRecord>('payments', { sortBy: 'createdAt' });
+  const activePayments = useMemo(() => payments.data.filter((payment) => !isVoided(payment)), [payments.data]);
 
-  const dues = useMemo(() => calculateMonthlyDues(tenants.data, payments.data, month), [month, payments.data, tenants.data]);
+  const dues = useMemo(() => calculateMonthlyDues(tenants.data, activePayments, month), [activePayments, month, tenants.data]);
   const monthlyPayments = useMemo(
-    () => payments.data.filter((payment) => matchesMonth(payment, month, ['paidOn', 'date', 'createdAt', 'updatedAt'])),
-    [month, payments.data],
+    () => activePayments.filter((payment) => matchesMonth(payment, month, ['paidOn', 'date', 'createdAt', 'updatedAt'])),
+    [activePayments, month],
   );
   const visibleDues = useMemo(
     () => dues.filter((due) => matchesDueStatus(due, dueFilter) && matchesDueSearch(due, search)),
@@ -459,8 +461,8 @@ export function MoneyScreen() {
     [monthlyPayments, paymentFilter, search, tenants.data],
   );
   const latestPayments = useMemo(
-    () => [...payments.data].sort((first, second) => getPaymentTime(second) - getPaymentTime(first)).slice(0, 5),
-    [payments.data],
+    () => [...activePayments].sort((first, second) => getPaymentTime(second) - getPaymentTime(first)).slice(0, 5),
+    [activePayments],
   );
   const duesSummary = summarizeDues(dues);
   const visibleDuesSummary = summarizeDues(visibleDues);
@@ -489,10 +491,23 @@ export function MoneyScreen() {
     setActionError('');
 
     try {
-      await addDoc(collection(db, 'payments'), {
+      const actorUid = auth.currentUser?.uid;
+      if (!actorUid) throw new Error(t('Please sign in again.'));
+      const batch = writeBatch(db);
+      const paymentRef = doc(collection(db, 'payments'));
+      batch.set(paymentRef, {
         ...payload,
+        createdBy: actorUid,
         createdAt: serverTimestamp(),
       });
+      batch.set(doc(collection(db, 'auditEvents')), {
+        action: 'payment.created',
+        actorUid,
+        createdAt: serverTimestamp(),
+        entityId: paymentRef.id,
+        entityType: 'payment',
+      });
+      await batch.commit();
       setShowPaymentForm(false);
       setView('collections');
       setPaymentFilter('all');
@@ -503,14 +518,19 @@ export function MoneyScreen() {
     }
   }
 
-  async function deletePayment(paymentId: string) {
+  async function voidPayment(paymentId: string) {
     setDeletingPaymentId(paymentId);
     setActionError('');
 
     try {
-      await deleteDoc(doc(db, 'payments', paymentId));
+      const actorUid = auth.currentUser?.uid;
+      if (!actorUid) throw new Error(t('Please sign in again.'));
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'payments', paymentId), { status: 'Voided', updatedAt: serverTimestamp(), voidedAt: serverTimestamp(), voidedBy: actorUid });
+      batch.set(doc(collection(db, 'auditEvents')), { action: 'payment.voided', actorUid, createdAt: serverTimestamp(), entityId: paymentId, entityType: 'payment' });
+      await batch.commit();
     } catch (deleteError) {
-      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete payment.'));
+      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not void payment.'));
     } finally {
       setDeletingPaymentId('');
     }
@@ -518,14 +538,14 @@ export function MoneyScreen() {
 
   function confirmDeletePayment(payment: PaymentRecord) {
     Alert.alert(
-      t('Delete payment?'),
-      `${t('Delete payment for')} ${getPaymentTenantName(payment, tenants.data)}? ${t('This cannot be undone.')}`,
+      t('Void payment?'),
+      `${t('Void payment for')} ${getPaymentTenantName(payment, tenants.data)}? ${t('The original record will remain in the audit trail.')}`,
       [
         { text: t('Cancel'), style: 'cancel' },
         {
-          text: t('Delete'),
+          text: t('Void'),
           style: 'destructive',
-          onPress: () => deletePayment(payment.id),
+          onPress: () => voidPayment(payment.id),
         },
       ],
     );
@@ -1049,7 +1069,7 @@ function PaymentCard({
           <Text style={styles.actionTextAlt}>{t('Receipt')}</Text>
         </Pressable>
         <Pressable disabled={deleting} onPress={onDelete} style={[styles.actionButton, styles.deleteInlineButton, deleting && styles.disabledAction]}>
-          <Text style={styles.deleteInlineText}>{t(deleting ? 'Deleting...' : 'Delete payment')}</Text>
+          <Text style={styles.deleteInlineText}>{t(deleting ? 'Voiding...' : 'Void payment')}</Text>
         </Pressable>
       </View>
     </View>

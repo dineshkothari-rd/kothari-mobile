@@ -49,8 +49,8 @@ export function OperationsOverviewScreen({ onNavigate }: { onNavigate: (destinat
   const collected = getCollectedTotal(monthlyPayments);
   const expenseTotal = getExpenseTotal(monthlyExpenses);
   const net = collected - expenseTotal;
-  const activeCustomers = tenants.data.filter((customer) => getCustomerStatusGroup(customer) === 'staying');
-  const upcomingCustomers = tenants.data.filter((customer) => getCustomerStatusGroup(customer) === 'upcoming');
+  const activeCustomers = tenants.data.filter((customer) => getCustomerStatusGroup(customer) === 'active');
+  const reservedCustomers = tenants.data.filter((customer) => getCustomerStatusGroup(customer) === 'reserved');
   const newEnquiries = monthlyEnquiries.filter((enquiry) => String(enquiry.status || 'New').toLowerCase() === 'new');
   const roomSummary = getRoomSummary(tenants.data, now);
   const readPgRooms = new Set(monthlyReadings.map((reading) => parseRoomLabel(reading.tenantRoom).room).filter(Boolean));
@@ -65,7 +65,7 @@ export function OperationsOverviewScreen({ onNavigate }: { onNavigate: (destinat
   const error = tenants.error || payments.error || expenses.error || enquiries.error || meterReadings.error;
   const businessSnapshots = businessTypeOptions.map((business) => {
     const customers = tenants.data.filter((customer) => String(customer.businessType || 'pg') === business.id);
-    const active = customers.filter((customer) => getCustomerStatusGroup(customer) === 'staying');
+    const active = customers.filter((customer) => getCustomerStatusGroup(customer) === 'active');
     const allocations = new Set(active.map((customer) => String(customer.room || '').trim()).filter(Boolean));
     const businessDues = summarizeDues(dues.filter((due) => due.businessType === business.id));
 
@@ -131,7 +131,7 @@ export function OperationsOverviewScreen({ onNavigate }: { onNavigate: (destinat
       <View style={styles.attentionPanel}>
         <Text style={styles.panelTitle}>{t('Needs attention')}</Text>
         <FocusRow accent={colors.danger} label={t('Outstanding dues')} onPress={() => onNavigate('money')} styles={styles} value={`${duesSummary.pendingCount + duesSummary.partialCount} ${t('customers')}`} />
-        <FocusRow accent={colors.copper} label={t('Upcoming')} onPress={() => onNavigate('customers')} styles={styles} value={`${upcomingCustomers.length} ${t('customers')}`} />
+        <FocusRow accent={colors.copper} label={t('Reservations')} onPress={() => onNavigate('customers')} styles={styles} value={`${reservedCustomers.length} ${t('customers')}`} />
         <FocusRow accent={colors.accent} label={t('New enquiries')} onPress={() => onNavigate('enquiries')} styles={styles} value={`${newEnquiries.length} ${t('leads')}`} />
         <FocusRow accent={colors.warning} label={t('Meter readings')} onPress={() => onNavigate('meter')} styles={styles} value={`${roomsMissingReading} ${t('rooms')}`} />
       </View>

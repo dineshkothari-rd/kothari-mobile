@@ -89,12 +89,16 @@ export function getExpenseAmount(expense: ExpenseRecord) {
   return toNumber(expense.amount ?? expense.total ?? expense.cost);
 }
 
+export function isVoided(record: PaymentRecord | ExpenseRecord) {
+  return Boolean(record.voidedAt) || String(record.status || '').toLowerCase() === 'voided';
+}
+
 export function getCollectedTotal(payments: PaymentRecord[] = []) {
-  return payments.reduce((sum, payment) => sum + getPaymentAmount(payment), 0);
+  return payments.reduce((sum, payment) => sum + (isVoided(payment) ? 0 : getPaymentAmount(payment)), 0);
 }
 
 export function getExpenseTotal(expenses: ExpenseRecord[] = []) {
-  return expenses.reduce((sum, expense) => sum + getExpenseAmount(expense), 0);
+  return expenses.reduce((sum, expense) => sum + (isVoided(expense) ? 0 : getExpenseAmount(expense)), 0);
 }
 
 export function isTenantActiveForMonth(tenant: TenantRecord, month: string) {
@@ -125,7 +129,7 @@ export function calculateMonthlyDues(
   const paymentsByTenant = payments.reduce<Record<string, number>>((map, payment) => {
     const tenantId = getPaymentTenantId(payment);
 
-    if (!tenantId || payment.month !== month) return map;
+    if (!tenantId || payment.month !== month || isVoided(payment)) return map;
 
     map[tenantId] = (map[tenantId] || 0) + getPaymentAmount(payment);
     return map;

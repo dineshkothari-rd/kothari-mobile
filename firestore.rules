@@ -1,0 +1,116 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function hasProfile() {
+      return signedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function role() {
+      return request.auth.token.get('role', null) != null
+        ? request.auth.token.get('role', null)
+        : hasProfile()
+          ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', null)
+          : null;
+    }
+
+    function legacyAdmin() {
+      return signedIn()
+        && request.auth.token.email != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.token.email));
+    }
+
+    function staff() {
+      return signedIn() && (role() in ['admin', 'staff'] || legacyAdmin());
+    }
+
+    function customer() {
+      return signedIn() && role() == 'customer';
+    }
+
+    function customerId() {
+      return request.auth.token.get('customerId', null) != null
+        ? request.auth.token.get('customerId', null)
+        : get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('customerId', '');
+    }
+
+    match /users/{userId} {
+      allow read: if staff() || (signedIn() && request.auth.uid == userId);
+      allow create, update, delete: if staff();
+    }
+
+    match /admins/{email} {
+      allow read: if staff() || (signedIn() && request.auth.token.email == email);
+      allow write: if role() == 'admin';
+    }
+
+    match /tenants/{tenantId} {
+      allow read: if staff() || (customer() && tenantId == customerId());
+      allow write: if staff();
+    }
+
+    match /payments/{paymentId} {
+      allow read: if staff() || (customer() && resource.data.tenantId == customerId());
+      allow create: if staff()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.amountPaid is number
+        && request.resource.data.amountPaid > 0;
+      allow update: if staff()
+        && resource.data.status != 'Voided'
+        && request.resource.data.status == 'Voided'
+        && request.resource.data.voidedBy == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'voidedAt', 'voidedBy']);
+      allow delete: if false;
+    }
+
+    match /expenses/{expenseId} {
+      allow read: if staff();
+      allow create: if staff()
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0;
+      allow update: if staff()
+        && resource.data.status != 'Voided'
+        && request.resource.data.status == 'Voided'
+        && request.resource.data.voidedBy == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'voidedAt', 'voidedBy']);
+      allow delete: if false;
+    }
+
+    match /meterReadings/{readingId} {
+      allow read: if staff() || (customer() && resource.data.tenantId == customerId());
+      allow write: if staff();
+    }
+
+    match /notices/{noticeId} {
+      allow read: if staff()
+        || (customer() && resource.data.audience == 'all')
+        || (customer()
+          && resource.data.audience == 'customer'
+          && resource.data.tenantId == customerId());
+      allow create, update: if staff()
+        && request.resource.data.audience in ['all', 'customer', 'staff']
+        && (request.resource.data.audience != 'customer'
+          || request.resource.data.tenantId is string);
+      allow delete: if staff();
+    }
+
+    match /enquiries/{enquiryId} {
+      allow read, write: if staff();
+    }
+
+    match /auditEvents/{eventId} {
+      allow read: if staff();
+      allow create: if staff() && request.resource.data.actorUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

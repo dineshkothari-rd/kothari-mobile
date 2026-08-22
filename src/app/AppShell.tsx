@@ -6,8 +6,9 @@ import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-nativ
 
 import { firebaseConfigStatus } from '../config/firebaseConfig';
 import { SignInScreen } from '../features/auth/SignInScreen';
-import { useAdminSession } from '../features/auth/useAdminSession';
+import { useAppSession } from '../features/auth/useAdminSession';
 import { WorkspaceScreen } from '../features/admin/WorkspaceScreen';
+import { CustomerWorkspaceScreen } from '../features/customer/CustomerWorkspaceScreen';
 import { AppErrorBoundary } from '../shared/components/AppErrorBoundary';
 import { AppThemeProvider, radius, spacing, typography, useAppTheme, type AppColors } from '../design/tokens';
 import { LanguageProvider, useLanguage } from '../shared/i18n/LanguageProvider';
@@ -23,7 +24,7 @@ export function AppShell() {
 }
 
 function AppShellContent() {
-  const session = useAdminSession();
+  const session = useAppSession();
   const { colors, isDark } = useAppTheme();
   const styles = createStyles(colors);
 
@@ -42,8 +43,10 @@ function AppShellContent() {
           <MissingConfigScreen />
         ) : session.status === 'checking' ? (
           <CheckingScreen styles={styles} colors={colors} />
-        ) : session.admin ? (
-          <WorkspaceScreen admin={session.admin} onSignOut={session.signOut} />
+        ) : session.profile?.role === 'customer' ? (
+          <CustomerWorkspaceScreen onSignOut={session.signOut} profile={session.profile} />
+        ) : session.profile ? (
+          <WorkspaceScreen admin={session.profile} onSignOut={session.signOut} />
         ) : (
           <SignInScreen error={session.error} loading={session.submitting} onSignIn={session.signIn} />
         )}

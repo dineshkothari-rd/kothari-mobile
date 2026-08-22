@@ -11,17 +11,17 @@ import {
   Text,
   View,
 } from 'react-native';
-import { addDoc, collection, deleteDoc, doc, serverTimestamp } from 'firebase/firestore';
+import { collection, doc, serverTimestamp, writeBatch } from 'firebase/firestore';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
-import { db } from '../../lib/firebase/client';
+import { auth, db } from '../../lib/firebase/client';
 import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import type { ExpenseRecord, PaymentRecord } from '../../shared/types/records';
 import { money, toNumber } from '../../shared/utils/money';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import { FilterPill } from '../customers/FilterPill';
-import { getCollectedTotal, getExpenseAmount, getMonthDisplay, matchesMonth } from '../operations/operationsMath';
+import { getCollectedTotal, getExpenseAmount, getMonthDisplay, isVoided, matchesMonth } from '../operations/operationsMath';
 import { editableExpenseCategories, expenseCategories, getExpenseCategory } from './expenseCategories';
 
 type ExpenseDraft = {
@@ -72,7 +72,7 @@ export function ExpenseDesk({ month }: { month: string }) {
   const expenses = useFirestoreCollection<ExpenseRecord>('expenses', { sortBy: 'createdAt' });
   const payments = useFirestoreCollection<PaymentRecord>('payments', { sortBy: 'createdAt' });
   const monthlyExpenses = useMemo(
-    () => expenses.data.filter((expense) => matchesMonth(expense, month, ['date', 'expenseDate', 'createdAt', 'updatedAt'])),
+    () => expenses.data.filter((expense) => !isVoided(expense) && matchesMonth(expense, month, ['date', 'expenseDate', 'createdAt', 'updatedAt'])),
     [expenses.data, month],
   );
   const monthlyPayments = useMemo(
@@ -104,10 +104,17 @@ export function ExpenseDesk({ month }: { month: string }) {
     setActionError('');
 
     try {
-      await addDoc(collection(db, 'expenses'), {
+      const actorUid = auth.currentUser?.uid;
+      if (!actorUid) throw new Error(t('Please sign in again.'));
+      const batch = writeBatch(db);
+      const expenseRef = doc(collection(db, 'expenses'));
+      batch.set(expenseRef, {
         ...payload,
+        createdBy: actorUid,
         createdAt: serverTimestamp(),
       });
+      batch.set(doc(collection(db, 'auditEvents')), { action: 'expense.created', actorUid, createdAt: serverTimestamp(), entityId: expenseRef.id, entityType: 'expense' });
+      await batch.commit();
       setShowForm(false);
     } catch (createError) {
       setActionError(createError instanceof Error ? createError.message : t('Could not save expense.'));
@@ -116,23 +123,28 @@ export function ExpenseDesk({ month }: { month: string }) {
     }
   }
 
-  async function deleteExpense(expenseId: string) {
+  async function voidExpense(expenseId: string) {
     setDeletingId(expenseId);
     setActionError('');
 
     try {
-      await deleteDoc(doc(db, 'expenses', expenseId));
+      const actorUid = auth.currentUser?.uid;
+      if (!actorUid) throw new Error(t('Please sign in again.'));
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'expenses', expenseId), { status: 'Voided', updatedAt: serverTimestamp(), voidedAt: serverTimestamp(), voidedBy: actorUid });
+      batch.set(doc(collection(db, 'auditEvents')), { action: 'expense.voided', actorUid, createdAt: serverTimestamp(), entityId: expenseId, entityType: 'expense' });
+      await batch.commit();
     } catch (deleteError) {
-      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete expense.'));
+      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not void expense.'));
     } finally {
       setDeletingId('');
     }
   }
 
   function confirmDelete(expense: ExpenseRecord) {
-    Alert.alert(t('Delete expense?'), `${t('Delete')} ${getExpenseTitle(expense)} ${t('for')} ${money(getExpenseAmount(expense))}?`, [
+    Alert.alert(t('Void expense?'), `${t('Void')} ${getExpenseTitle(expense)} ${t('for')} ${money(getExpenseAmount(expense))}? ${t('The original record will remain in the audit trail.')}`, [
       { text: t('Cancel'), style: 'cancel' },
-      { text: t('Delete'), style: 'destructive', onPress: () => deleteExpense(expense.id) },
+      { text: t('Void'), style: 'destructive', onPress: () => voidExpense(expense.id) },
     ]);
   }
 
@@ -338,7 +350,7 @@ function ExpenseCard({
 
       {expense.note ? <Text style={styles.note}>{String(expense.note)}</Text> : null}
       <Pressable disabled={deleting} onPress={onDelete} style={[styles.deleteButton, deleting && styles.disabledAction]}>
-        <Text style={styles.deleteButtonText}>{t(deleting ? 'Deleting...' : 'Delete expense')}</Text>
+        <Text style={styles.deleteButtonText}>{t(deleting ? 'Voiding...' : 'Void expense')}</Text>
       </Pressable>
     </View>
   );

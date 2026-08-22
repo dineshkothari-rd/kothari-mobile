@@ -42,13 +42,13 @@ export function SignInScreen({ error, loading, onSignIn }: SignInScreenProps) {
             </View>
             <Text style={styles.eyebrow}>Kothari</Text>
             <Text style={styles.title}>{t('Welcome back')}</Text>
-            <Text style={styles.subtitle}>{t('Sign in to manage rooms, payments, and daily work.')}</Text>
+            <Text style={styles.subtitle}>{t('Sign in to manage your stay, membership, rooms, and payments.')}</Text>
           </View>
 
           <View style={styles.form}>
             <View>
               <Text style={styles.formTitle}>{t('Secure login')}</Text>
-              <Text style={styles.formSubtitle}>{t('Only approved staff can open the app.')}</Text>
+              <Text style={styles.formSubtitle}>{t('Only approved accounts can open the app.')}</Text>
             </View>
             <TextField
               autoCapitalize="none"
