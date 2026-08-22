@@ -8,6 +8,7 @@ export const languages: Array<{ code: AppLanguage; label: string; nativeLabel: s
 export const translations: Record<AppLanguage, Record<string, string>> = {
   en: {},
   hi: {
+    'Admin': 'एडमिन',
     'Add': 'जोड़ें',
     'Add guest': 'मेहमान जोड़ें',
     'Add customer': 'ग्राहक जोड़ें',

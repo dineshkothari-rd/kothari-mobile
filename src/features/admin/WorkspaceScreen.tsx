@@ -65,7 +65,7 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
             <Text style={styles.brandMarkText}>K</Text>
           </View>
           <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>Kothari</Text>
+            <Text style={styles.eyebrow}>Kothari · {t(admin.role === 'admin' ? 'Admin' : 'Staff')}</Text>
             <Text style={styles.title}>{t('Hi')}, {admin.name}</Text>
           </View>
         </View>
@@ -85,7 +85,7 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
           {activeTab === 'overview' ? (
             <OperationsOverviewScreen onNavigate={openDestination} />
           ) : activeTab === 'tenants' ? (
-            <CustomersScreen />
+            <CustomersScreen isAdmin={admin.role === 'admin'} />
           ) : activeTab === 'payments' ? (
             <MoneyScreen />
           ) : activeTab === 'more' ? (

@@ -24,8 +24,12 @@ service cloud.firestore {
         && exists(/databases/$(database)/documents/admins/$(request.auth.token.email));
     }
 
+    function admin() {
+      return signedIn() && (role() == 'admin' || legacyAdmin());
+    }
+
     function staff() {
-      return signedIn() && (role() in ['admin', 'staff'] || legacyAdmin());
+      return signedIn() && (admin() || role() == 'staff');
     }
 
     function customer() {
@@ -39,18 +43,26 @@ service cloud.firestore {
     }
 
     match /users/{userId} {
-      allow read: if staff() || (signedIn() && request.auth.uid == userId);
-      allow create, update, delete: if staff();
+      allow read: if admin() || (signedIn() && request.auth.uid == userId);
+      allow create, update: if admin()
+        && request.resource.data.role in ['admin', 'staff', 'customer'];
+      allow delete: if admin();
     }
 
     match /admins/{email} {
-      allow read: if staff() || (signedIn() && request.auth.token.email == email);
-      allow write: if role() == 'admin';
+      allow read: if admin() || (signedIn() && request.auth.token.email == email);
+      allow write: if admin();
     }
 
     match /tenants/{tenantId} {
       allow read: if staff() || (customer() && tenantId == customerId());
-      allow write: if staff();
+      allow create: if staff()
+        && !request.resource.data.keys().hasAny(['accessStatus', 'invitedAt', 'invitedBy', 'userId']);
+      allow update: if admin()
+        || (role() == 'staff'
+          && !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(['accessStatus', 'invitedAt', 'invitedBy', 'userId']));
+      allow delete: if admin();
     }
 
     match /payments/{paymentId} {
@@ -104,7 +116,7 @@ service cloud.firestore {
     }
 
     match /auditEvents/{eventId} {
-      allow read: if staff();
+      allow read: if admin();
       allow create: if staff() && request.resource.data.actorUid == request.auth.uid;
       allow update, delete: if false;
     }

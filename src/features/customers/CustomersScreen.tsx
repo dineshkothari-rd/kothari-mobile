@@ -147,7 +147,7 @@ function needsCustomerAttention(customer: TenantRecord) {
     || !customer.idProof;
 }
 
-export function CustomersScreen() {
+export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
   const styles = createStyles(colors);
@@ -751,10 +751,10 @@ export function CustomersScreen() {
               expanded={selectedCustomerId === tenant.id}
               inviting={invitingId === tenant.id}
               key={tenant.id}
-              onDelete={() => confirmDelete(tenant)}
+              onDelete={isAdmin ? () => confirmDelete(tenant) : undefined}
               onCancel={() => confirmCancelReservation(tenant)}
               onEdit={() => openEditForm(tenant)}
-              onInvite={() => shareCustomerAccess(tenant)}
+              onInvite={isAdmin ? () => shareCustomerAccess(tenant) : undefined}
               onCheckIn={() => confirmCheckIn(tenant)}
               onCheckOut={() => confirmCheckOut(tenant)}
               onToggle={() => setSelectedCustomerId((current) => current === tenant.id ? '' : tenant.id)}
