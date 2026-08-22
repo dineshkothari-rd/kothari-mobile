@@ -7,12 +7,19 @@ export type TenantRecord = FirestoreRecord & {
   additionalGuests?: string[];
   businessType?: string;
   documentId?: string;
+  documentType?: string;
   fullName?: string;
   email?: string;
   idProof?: string | null;
   idProofName?: string | null;
   idProofSize?: number;
   idProofType?: string | null;
+  idProofBack?: string | null;
+  idProofBackName?: string | null;
+  idProofBackSize?: number;
+  customerPhoto?: string | null;
+  customerPhotoName?: string | null;
+  customerPhotoSize?: number;
   moveInTime?: string;
   moveInDate?: string;
   moveOutDate?: string;
@@ -32,6 +39,10 @@ export type TenantRecord = FirestoreRecord & {
     seconds?: number;
     toDate?: () => Date;
   };
+  checkInMeterReading?: number | string;
+  checkInMeterReadingId?: string;
+  checkOutMeterReading?: number | string;
+  checkOutMeterReadingId?: string;
   checkInDate?: string;
   checkOutDate?: string;
   checkoutDate?: string;
@@ -114,6 +125,15 @@ export type MeterReadingRecord = FirestoreRecord & {
   tenantName?: string;
   tenantRoom?: string;
   unitsConsumed?: number | string;
+  readingType?: 'check-in' | 'check-out' | 'manual';
+  photo?: string;
+  photoSize?: number;
+  ocrText?: string;
+  readingSource?: string;
+  createdAt?: {
+    seconds?: number;
+    toDate?: () => Date;
+  };
 };
 
 export type DueRecord = {

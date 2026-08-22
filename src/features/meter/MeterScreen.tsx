@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   KeyboardAvoidingView,
   Modal,
   Platform,
@@ -11,7 +12,8 @@ import {
   Text,
   View,
 } from 'react-native';
-import { addDoc, collection, deleteDoc, doc, getDocs, limit, orderBy, query, serverTimestamp, where } from 'firebase/firestore';
+import { addDoc, collection, deleteDoc, doc, getDocs, limit, orderBy, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { db } from '../../lib/firebase/client';
@@ -21,8 +23,9 @@ import { useRealtimeClock } from '../../shared/hooks/useRealtimeClock';
 import type { MeterReadingRecord, TenantRecord } from '../../shared/types/records';
 import { money, toNumber } from '../../shared/utils/money';
 import { FilterPill } from '../customers/FilterPill';
-import { getCustomerAllocationLabel } from '../customers/customerUtils';
+import { getCustomerAllocationLabel, getCustomerStatus } from '../customers/customerUtils';
 import { isRoomCustomer } from '../customers/roomUtils';
+import { LifecycleMeterSheet, type LifecycleMeterResult } from '../customers/LifecycleMeterSheet';
 import { getMonthKey } from '../operations/operationsMath';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
@@ -41,12 +44,18 @@ type MeterDraft = {
   unitsConsumed: number;
 };
 
+type PendingLifecycle = {
+  action: 'check-in' | 'check-out';
+  customer: TenantRecord;
+  minimumReading: number;
+};
+
 function getTenantName(tenant: TenantRecord) {
   return tenant.name || tenant.fullName || tenant.tenantName || 'Unnamed';
 }
 
 function isMeterCustomer(tenant: TenantRecord, now: number) {
-  return isRoomCustomer(tenant, now);
+  return String(tenant.businessType || 'pg') === 'pg' && isRoomCustomer(tenant, now);
 }
 
 function matchesSearch(reading: MeterReadingRecord, search: string) {
@@ -67,6 +76,10 @@ function getBillTotal(readings: MeterReadingRecord[]) {
   return readings.reduce((sum, reading) => sum + toNumber(reading.billAmount), 0);
 }
 
+function formatLocalDate(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
 export function MeterScreen() {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
@@ -77,6 +90,8 @@ export function MeterScreen() {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState('');
   const [actionError, setActionError] = useState('');
+  const [viewingPhoto, setViewingPhoto] = useState<MeterReadingRecord | null>(null);
+  const [pendingLifecycle, setPendingLifecycle] = useState<PendingLifecycle | null>(null);
   const now = useRealtimeClock();
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
   const readings = useFirestoreCollection<MeterReadingRecord>('meterReadings', { sortBy: 'createdAt' });
@@ -93,6 +108,15 @@ export function MeterScreen() {
   const totalBill = getBillTotal(filtered);
   const loading = tenants.loading || readings.loading;
   const error = tenants.error || readings.error;
+  const lifecycleCustomers = useMemo(
+    () => tenants.data.filter((tenant) => {
+      const status = getCustomerStatus(tenant);
+      return String(tenant.businessType || 'pg') === 'pg'
+        && Boolean(tenant.room)
+        && ['booked', 'active', 'checked in', 'occupied'].includes(status);
+    }),
+    [tenants.data],
+  );
 
   function clearFilters() {
     setSearch('');
@@ -136,15 +160,103 @@ export function MeterScreen() {
     ]);
   }
 
+  function latestRoomReading(customer: TenantRecord) {
+    const customerReading = readings.data.find((reading) => reading.tenantId === customer.id);
+    const roomReading = readings.data.find((reading) => reading.tenantRoom === customer.room);
+    return toNumber(customerReading?.currentReading ?? roomReading?.currentReading);
+  }
+
+  function openLifecycle(customer: TenantRecord) {
+    const action = getCustomerStatus(customer) === 'booked' ? 'check-in' : 'check-out';
+    const checkInReading = toNumber(customer.checkInMeterReading)
+      || toNumber(readings.data.find((reading) => reading.tenantId === customer.id && reading.readingType === 'check-in')?.currentReading);
+    setActionError('');
+    setPendingLifecycle({
+      action,
+      customer,
+      minimumReading: action === 'check-out' ? checkInReading || latestRoomReading(customer) : latestRoomReading(customer),
+    });
+  }
+
+  async function completeLifecycle(result: LifecycleMeterResult) {
+    if (!pendingLifecycle) return;
+
+    const { action, customer, minimumReading } = pendingLifecycle;
+    const checkingIn = action === 'check-in';
+    setSaving(true);
+    setActionError('');
+
+    try {
+      const eventTime = new Date();
+      const readingRef = doc(collection(db, 'meterReadings'));
+      const batch = writeBatch(db);
+      const unitsConsumed = checkingIn ? 0 : Math.max(0, result.reading - minimumReading);
+
+      batch.set(readingRef, {
+        billAmount: unitsConsumed * RATE_PER_UNIT,
+        createdAt: serverTimestamp(),
+        currentReading: result.reading,
+        month: `${eventTime.getFullYear()}-${String(eventTime.getMonth() + 1).padStart(2, '0')}`,
+        note: checkingIn ? 'Check-in meter photo' : 'Check-out meter photo',
+        ocrText: result.ocrText,
+        photo: result.photo,
+        photoSize: result.photoSize,
+        previousReading: minimumReading,
+        ratePerUnit: RATE_PER_UNIT,
+        readingSource: 'ocr-locked',
+        readingType: action,
+        tenantId: customer.id,
+        tenantName: getTenantName(customer),
+        tenantRoom: customer.room || '',
+        unitsConsumed,
+      });
+      batch.update(doc(db, 'tenants', customer.id), checkingIn ? {
+        checkedInAt: serverTimestamp(),
+        checkInMeterReading: result.reading,
+        checkInMeterReadingId: readingRef.id,
+        moveInDate: formatLocalDate(eventTime),
+        moveInTime: eventTime.toTimeString().slice(0, 5),
+        status: 'checked in',
+        updatedAt: serverTimestamp(),
+      } : {
+        checkedOutAt: serverTimestamp(),
+        checkOutMeterReading: result.reading,
+        checkOutMeterReadingId: readingRef.id,
+        moveOutDate: formatLocalDate(eventTime),
+        moveOutTime: eventTime.toTimeString().slice(0, 5),
+        status: 'checked out',
+        updatedAt: serverTimestamp(),
+      });
+
+      await batch.commit();
+      setPendingLifecycle(null);
+    } catch (lifecycleError) {
+      setActionError(lifecycleError instanceof Error ? lifecycleError.message : t('Could not save meter lifecycle.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <View style={styles.wrap}>
+      <MeterPhotoPreview onClose={() => setViewingPhoto(null)} reading={viewingPhoto} styles={styles} />
+      {pendingLifecycle ? (
+        <LifecycleMeterSheet
+          action={pendingLifecycle.action}
+          customer={pendingLifecycle.customer}
+          minimumReading={pendingLifecycle.minimumReading}
+          onClose={() => setPendingLifecycle(null)}
+          onSubmit={completeLifecycle}
+          saving={saving}
+        />
+      ) : null}
       {showForm ? (
         <MeterFormSheet onClose={() => setShowForm(false)} onSubmit={createReading} saving={saving} styles={styles} tenants={meterCustomers} />
       ) : null}
 
       <View style={styles.hero}>
         <View style={styles.heroTop}>
-          <View>
+          <View style={styles.heroCopy}>
             <Text style={styles.kicker}>{t('Electricity')}</Text>
             <Text style={styles.title}>{t('Meter readings')}</Text>
             <Text style={styles.subtitle}>{t('Add readings and calculate the bill for each room.')}</Text>
@@ -177,6 +289,25 @@ export function MeterScreen() {
       {error ? <Text style={styles.errorText}>{error}</Text> : null}
       {actionError ? <Text style={styles.errorText}>{actionError}</Text> : null}
 
+      <View style={styles.lifecyclePanel}>
+        <Text style={styles.lifecycleTitle}>{t('Check-in / Check-out meter')}</Text>
+        <Text style={styles.lifecycleHelp}>{t('Take the required meter photo and complete the customer stay from here.')}</Text>
+        {lifecycleCustomers.length ? lifecycleCustomers.map((customer) => {
+          const checkingIn = getCustomerStatus(customer) === 'booked';
+          return (
+            <View key={customer.id} style={styles.lifecycleRow}>
+              <View style={styles.lifecycleCopy}>
+                <Text style={styles.lifecycleName}>{getTenantName(customer)}</Text>
+                <Text style={styles.lifecycleMeta}>{getCustomerAllocationLabel(customer)} / {t(checkingIn ? 'Upcoming' : 'Staying')}</Text>
+              </View>
+              <Pressable disabled={saving} onPress={() => openLifecycle(customer)} style={styles.lifecycleButton}>
+                <Text style={styles.lifecycleButtonText}>{t(checkingIn ? 'Check in + photo' : 'Check out + photo')}</Text>
+              </Pressable>
+            </View>
+          );
+        }) : <Text style={styles.helpText}>{t('No pending room lifecycle actions.')}</Text>}
+      </View>
+
       <View style={styles.toolbar}>
         <TextField label="Search readings" onChangeText={setSearch} placeholder="Name, room, month, note..." value={search} />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filterRail}>
@@ -189,7 +320,14 @@ export function MeterScreen() {
 
       {filtered.length ? (
         filtered.slice(0, 50).map((reading) => (
-          <MeterCard deleting={deletingId === reading.id} key={reading.id} onDelete={() => confirmDelete(reading)} reading={reading} styles={styles} />
+          <MeterCard
+            deleting={deletingId === reading.id}
+            key={reading.id}
+            onDelete={() => confirmDelete(reading)}
+            onViewPhoto={() => setViewingPhoto(reading)}
+            reading={reading}
+            styles={styles}
+          />
         ))
       ) : (
         <View style={styles.emptyState}>
@@ -354,11 +492,13 @@ function MeterFormSheet({
 function MeterCard({
   deleting,
   onDelete,
+  onViewPhoto,
   reading,
   styles,
 }: {
   deleting: boolean;
   onDelete: () => void;
+  onViewPhoto: () => void;
   reading: MeterReadingRecord;
   styles: ReturnType<typeof createStyles>;
 }) {
@@ -380,6 +520,18 @@ function MeterCard({
         <MeterMini label={t('Previous')} styles={styles} value={String(toNumber(reading.previousReading))} />
         <MeterMini label={t('Current')} styles={styles} value={String(toNumber(reading.currentReading))} />
       </View>
+
+      {reading.photo ? (
+        <View style={styles.photoSection}>
+          <Text style={styles.photoLabel}>{t(reading.readingType === 'check-in' ? 'Check-in meter photo' : reading.readingType === 'check-out' ? 'Check-out meter photo' : 'Meter photo')}</Text>
+          <Pressable accessibilityRole="button" onPress={onViewPhoto} style={styles.photoButton}>
+            <Image resizeMode="cover" source={{ uri: String(reading.photo) }} style={styles.meterPhoto} />
+            <View style={styles.photoOverlay}>
+              <Text style={styles.photoOverlayText}>{t('View full photo')}</Text>
+            </View>
+          </Pressable>
+        </View>
+      ) : null}
       <View style={styles.grid}>
         <MeterMini label={t('Units')} styles={styles} value={String(toNumber(reading.unitsConsumed))} />
         <MeterMini label={t('Rate')} styles={styles} value={money(reading.ratePerUnit)} />
@@ -390,6 +542,47 @@ function MeterCard({
         <Text style={styles.deleteText}>{t(deleting ? 'Deleting...' : 'Delete reading')}</Text>
       </Pressable>
     </View>
+  );
+}
+
+function MeterPhotoPreview({
+  onClose,
+  reading,
+  styles,
+}: {
+  onClose: () => void;
+  reading: MeterReadingRecord | null;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
+
+  if (!reading?.photo) return null;
+
+  const title = reading.readingType === 'check-in'
+    ? t('Check-in meter photo')
+    : reading.readingType === 'check-out'
+      ? t('Check-out meter photo')
+      : t('Meter photo');
+
+  return (
+    <Modal animationType="fade" transparent visible onRequestClose={onClose}>
+      <View style={[styles.photoPreviewBackdrop, { paddingBottom: Math.max(insets.bottom, spacing.xl), paddingTop: Math.max(insets.top, spacing.xl) }]}>
+        <View style={styles.photoPreviewHeader}>
+          <View style={styles.photoPreviewCopy}>
+            <Text style={styles.photoPreviewTitle}>{title}</Text>
+            <Text style={styles.photoPreviewMeta}>
+              {reading.tenantName || t('Meter reading')} / {reading.tenantRoom || '-'} / {toNumber(reading.currentReading)}
+            </Text>
+          </View>
+          <Pressable accessibilityRole="button" onPress={onClose} style={styles.photoPreviewClose}>
+            <Text style={styles.photoPreviewCloseText}>{t('Close')}</Text>
+          </Pressable>
+        </View>
+        <Image resizeMode="contain" source={{ uri: String(reading.photo) }} style={styles.photoPreviewImage} />
+        <Text style={styles.photoPreviewHint}>{t('Tap Close or use the Android back button to return.')}</Text>
+      </View>
+    </Modal>
   );
 }
 
@@ -426,9 +619,10 @@ function createStyles(colors: AppColors) {
     },
     heroTop: {
       alignItems: 'flex-start',
-      flexDirection: 'row',
       gap: spacing.md,
-      justifyContent: 'space-between',
+    },
+    heroCopy: {
+      width: '100%',
     },
     kicker: {
       color: colors.muted,
@@ -449,8 +643,12 @@ function createStyles(colors: AppColors) {
       marginTop: spacing.sm,
     },
     addButton: {
+      alignItems: 'center',
+      alignSelf: 'stretch',
       backgroundColor: colors.ink,
       borderRadius: radius.md,
+      justifyContent: 'center',
+      minHeight: 46,
       paddingHorizontal: spacing.md,
       paddingVertical: spacing.sm,
     },
@@ -506,6 +704,45 @@ function createStyles(colors: AppColors) {
     toolbar: {
       gap: spacing.md,
     },
+    lifecyclePanel: {
+      backgroundColor: colors.surface,
+      borderColor: colors.borderSoft,
+      borderRadius: radius.lg,
+      borderWidth: 1,
+      gap: spacing.sm,
+      padding: spacing.lg,
+      ...shadow.card,
+    },
+    lifecycleTitle: {
+      color: colors.text,
+      fontSize: 18,
+      fontWeight: typography.weight.black,
+    },
+    lifecycleHelp: {
+      color: colors.muted,
+      fontSize: 13,
+      lineHeight: 19,
+      marginBottom: spacing.xs,
+    },
+    lifecycleRow: {
+      alignItems: 'center',
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: radius.md,
+      flexDirection: 'row',
+      gap: spacing.sm,
+      padding: spacing.md,
+    },
+    lifecycleCopy: { flex: 1 },
+    lifecycleName: { color: colors.text, fontSize: 14, fontWeight: typography.weight.black },
+    lifecycleMeta: { color: colors.muted, fontSize: 12, fontWeight: typography.weight.bold, marginTop: 4 },
+    lifecycleButton: {
+      backgroundColor: colors.ink,
+      borderRadius: radius.md,
+      justifyContent: 'center',
+      minHeight: 42,
+      paddingHorizontal: spacing.md,
+    },
+    lifecycleButtonText: { color: colors.onBrand, fontSize: 12, fontWeight: typography.weight.black },
     filterRail: {
       gap: spacing.sm,
       paddingRight: spacing.lg,
@@ -546,6 +783,88 @@ function createStyles(colors: AppColors) {
       flexDirection: 'row',
       gap: spacing.sm,
       marginTop: spacing.md,
+    },
+    photoSection: {
+      marginTop: spacing.md,
+    },
+    photoLabel: {
+      color: colors.muted,
+      fontSize: 11,
+      fontWeight: typography.weight.black,
+      marginBottom: spacing.sm,
+      textTransform: 'uppercase',
+    },
+    meterPhoto: {
+      backgroundColor: colors.surfaceMuted,
+      borderRadius: radius.md,
+      height: 180,
+      width: '100%',
+    },
+    photoButton: {
+      borderRadius: radius.md,
+      overflow: 'hidden',
+      position: 'relative',
+    },
+    photoOverlay: {
+      backgroundColor: 'rgba(5,8,13,0.72)',
+      bottom: 0,
+      left: 0,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+      position: 'absolute',
+      right: 0,
+    },
+    photoOverlayText: {
+      color: '#FFFFFF',
+      fontSize: 12,
+      fontWeight: typography.weight.black,
+      textAlign: 'center',
+    },
+    photoPreviewBackdrop: {
+      backgroundColor: 'rgba(0,0,0,0.94)',
+      flex: 1,
+      paddingHorizontal: spacing.lg,
+    },
+    photoPreviewHeader: {
+      alignItems: 'flex-start',
+      flexDirection: 'row',
+      gap: spacing.md,
+      marginBottom: spacing.lg,
+    },
+    photoPreviewCopy: {
+      flex: 1,
+    },
+    photoPreviewTitle: {
+      color: '#FFFFFF',
+      fontSize: 20,
+      fontWeight: typography.weight.black,
+    },
+    photoPreviewMeta: {
+      color: '#C8D4DE',
+      fontSize: 13,
+      lineHeight: 19,
+      marginTop: spacing.xs,
+    },
+    photoPreviewClose: {
+      backgroundColor: 'rgba(255,255,255,0.16)',
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm,
+    },
+    photoPreviewCloseText: {
+      color: '#FFFFFF',
+      fontSize: 13,
+      fontWeight: typography.weight.black,
+    },
+    photoPreviewImage: {
+      flex: 1,
+      width: '100%',
+    },
+    photoPreviewHint: {
+      color: '#A9B8C7',
+      fontSize: 12,
+      marginTop: spacing.md,
+      textAlign: 'center',
     },
     miniBox: {
       backgroundColor: colors.surfaceMuted,

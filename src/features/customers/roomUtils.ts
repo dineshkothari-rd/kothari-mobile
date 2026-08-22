@@ -86,7 +86,8 @@ export function isRoomCustomer(customer: TenantRecord, now = Date.now()) {
   if (!activeStatuses.includes(status)) return false;
 
   const checkout = getStayCheckout(customer);
-  if (checkout && checkout.getTime() <= now) return false;
+  const isLegacyLifecycle = !customer.checkedInAt && !customer.checkedOutAt;
+  if (isLegacyLifecycle && checkout && checkout.getTime() <= now) return false;
 
   return Boolean(parseRoomLabel(customer.room).room);
 }

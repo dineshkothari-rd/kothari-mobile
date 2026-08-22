@@ -1,11 +1,11 @@
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import type { TenantRecord } from '../../shared/types/records';
 import { money } from '../../shared/utils/money';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import { getBusinessType } from './businessTypes';
-import { getCustomerName, getCustomerStatus, getCustomerSubtitle } from './customerUtils';
+import { getCustomerName, getCustomerStatus, getCustomerStatusGroup, getCustomerStatusLabel, getCustomerSubtitle } from './customerUtils';
 
 type CustomerCardProps = {
   customer: TenantRecord;
@@ -29,8 +29,10 @@ export function CustomerCard({ customer, checkingIn = false, checkingOut = false
   const services = Array.isArray(customer.services) ? customer.services : [];
   const additionalGuests = Array.isArray(customer.additionalGuests) ? customer.additionalGuests.filter(Boolean) : [];
   const status = getCustomerStatus(customer);
-  const canCheckIn = customer.businessType === 'hotel' && status === 'booked';
-  const canCheckOut = customer.businessType === 'hotel' && ['checked in', 'occupied', 'active'].includes(status);
+  const statusGroup = getCustomerStatusGroup(customer);
+  const usesRoomLifecycle = String(customer.businessType || 'pg') === 'pg';
+  const canCheckIn = usesRoomLifecycle && status === 'booked';
+  const canCheckOut = usesRoomLifecycle && ['checked in', 'occupied', 'active'].includes(status);
   const snapshotTitle = customer.businessType === 'library'
     ? 'Membership snapshot'
     : customer.businessType === 'hotel'
@@ -46,14 +48,18 @@ export function CustomerCard({ customer, checkingIn = false, checkingOut = false
     <View style={[styles.card, expanded && styles.cardExpanded]}>
       <View style={styles.header}>
         <View style={styles.avatar}>
-          <Text style={styles.avatarText}>{getCustomerName(customer).slice(0, 1).toUpperCase()}</Text>
+          {customer.customerPhoto ? (
+            <Image resizeMode="cover" source={{ uri: customer.customerPhoto }} style={styles.avatarPhoto} />
+          ) : (
+            <Text style={styles.avatarText}>{getCustomerName(customer).slice(0, 1).toUpperCase()}</Text>
+          )}
         </View>
         <View style={styles.nameBlock}>
           <Text style={styles.name}>{getCustomerName(customer)}</Text>
           <Text style={styles.subtitle}>{getCustomerSubtitle(customer)}</Text>
         </View>
-        <View style={styles.statusPill}>
-          <Text style={styles.statusText}>{t(status)}</Text>
+        <View style={[styles.statusPill, statusGroup === 'staying' && styles.statusPillActive, statusGroup === 'completed' && styles.statusPillCompleted]}>
+          <Text style={styles.statusText}>{t(getCustomerStatusLabel(customer))}</Text>
         </View>
       </View>
 
@@ -83,8 +89,30 @@ export function CustomerCard({ customer, checkingIn = false, checkingOut = false
       ) : null}
 
       {customer.idProof ? (
-        <Pressable disabled={!onViewIdProof} onPress={onViewIdProof}>
-          <Text style={styles.proofText}>{t('ID proof attached')}{customer.idProofName ? ` - ${customer.idProofName}` : ''}</Text>
+        <Pressable accessibilityRole="button" disabled={!onViewIdProof} onPress={onViewIdProof} style={styles.proofCard}>
+          {String(customer.idProof).startsWith('data:image') ? (
+            <Image resizeMode="cover" source={{ uri: customer.idProof }} style={styles.proofThumbnail} />
+          ) : (
+            <View style={styles.proofPlaceholder}>
+              <Text style={styles.proofPlaceholderText}>ID</Text>
+            </View>
+          )}
+          <View style={styles.proofCopy}>
+            <Text style={styles.proofTitle}>{t('ID proof')}</Text>
+            <Text style={styles.proofName} numberOfLines={1}>{customer.idProofName || t('Document image')}</Text>
+            <Text style={styles.proofView}>{t('View full image')}</Text>
+          </View>
+        </Pressable>
+      ) : null}
+
+      {canCheckIn && onCheckIn ? (
+        <Pressable accessibilityRole="button" disabled={checkingIn} onPress={onCheckIn} style={styles.lifecycleAction}>
+          <Text style={styles.lifecycleActionText}>{t(checkingIn ? 'Checking in...' : 'Check in with meter photo')}</Text>
+        </Pressable>
+      ) : null}
+      {canCheckOut && onCheckOut ? (
+        <Pressable accessibilityRole="button" disabled={checkingOut} onPress={onCheckOut} style={styles.lifecycleAction}>
+          <Text style={styles.lifecycleActionText}>{t(checkingOut ? 'Checking out...' : 'Check out with meter photo')}</Text>
         </Pressable>
       ) : null}
 
@@ -99,16 +127,6 @@ export function CustomerCard({ customer, checkingIn = false, checkingOut = false
             {services.length ? `${services.join(', ')} ${t('included.')}` : t('No services added yet.')}
           </Text>
           <View style={styles.expandedActions}>
-            {canCheckIn && onCheckIn ? (
-              <Pressable accessibilityRole="button" disabled={checkingIn} onPress={onCheckIn} style={styles.expandedAction}>
-                <Text style={styles.expandedActionText}>{t(checkingIn ? 'Checking in...' : 'Check in')}</Text>
-              </Pressable>
-            ) : null}
-            {canCheckOut && onCheckOut ? (
-              <Pressable accessibilityRole="button" disabled={checkingOut} onPress={onCheckOut} style={styles.expandedAction}>
-                <Text style={styles.expandedActionText}>{t(checkingOut ? 'Checking out...' : 'Check out')}</Text>
-              </Pressable>
-            ) : null}
             <Pressable accessibilityRole="button" disabled={!customer.phone} onPress={callCustomer} style={styles.expandedAction}>
               <Text style={styles.expandedActionText}>{t('Call')}</Text>
             </Pressable>
@@ -185,6 +203,7 @@ function createStyles(colors: AppColors) {
     borderRadius: radius.md,
     height: 42,
     justifyContent: 'center',
+    overflow: 'hidden',
     width: 42,
   },
   avatarText: {
@@ -192,6 +211,7 @@ function createStyles(colors: AppColors) {
     fontSize: 18,
     fontWeight: typography.weight.black,
   },
+  avatarPhoto: { height: '100%', width: '100%' },
   name: {
     color: colors.text,
     fontSize: 17,
@@ -209,11 +229,31 @@ function createStyles(colors: AppColors) {
     paddingHorizontal: spacing.sm,
     paddingVertical: 6,
   },
+  statusPillActive: {
+    backgroundColor: colors.successSoft,
+  },
+  statusPillCompleted: {
+    backgroundColor: colors.surfaceMuted,
+  },
   statusText: {
     color: colors.text,
     fontSize: 11,
     fontWeight: typography.weight.black,
     textTransform: 'uppercase',
+  },
+  lifecycleAction: {
+    alignItems: 'center',
+    backgroundColor: colors.ink,
+    borderRadius: radius.md,
+    justifyContent: 'center',
+    marginTop: spacing.md,
+    minHeight: 48,
+    paddingHorizontal: spacing.md,
+  },
+  lifecycleActionText: {
+    color: colors.onBrand,
+    fontSize: 14,
+    fontWeight: typography.weight.black,
   },
   detailGrid: {
     flexDirection: 'row',
@@ -247,6 +287,7 @@ function createStyles(colors: AppColors) {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: spacing.sm,
+    marginBottom: spacing.sm,
     marginTop: spacing.md,
   },
   additionalGuestsBox: {
@@ -278,11 +319,54 @@ function createStyles(colors: AppColors) {
     paddingHorizontal: spacing.sm,
     paddingVertical: 6,
   },
-  proofText: {
-    color: colors.copper,
-    fontSize: 12,
-    fontWeight: typography.weight.bold,
+  proofCard: {
+    alignItems: 'center',
+    backgroundColor: colors.surfaceMuted,
+    borderColor: colors.borderSoft,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: spacing.md,
     marginTop: spacing.md,
+    overflow: 'hidden',
+    padding: spacing.sm,
+  },
+  proofThumbnail: {
+    borderRadius: radius.sm,
+    height: 72,
+    width: 88,
+  },
+  proofPlaceholder: {
+    alignItems: 'center',
+    backgroundColor: colors.ink,
+    borderRadius: radius.sm,
+    height: 72,
+    justifyContent: 'center',
+    width: 88,
+  },
+  proofPlaceholderText: {
+    color: colors.onBrand,
+    fontSize: 18,
+    fontWeight: typography.weight.black,
+  },
+  proofCopy: {
+    flex: 1,
+  },
+  proofTitle: {
+    color: colors.text,
+    fontSize: 13,
+    fontWeight: typography.weight.black,
+  },
+  proofName: {
+    color: colors.muted,
+    fontSize: 12,
+    marginTop: 3,
+  },
+  proofView: {
+    color: colors.brand,
+    fontSize: 12,
+    fontWeight: typography.weight.black,
+    marginTop: spacing.sm,
   },
   toggleButton: {
     alignSelf: 'flex-start',

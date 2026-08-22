@@ -2,7 +2,7 @@ import { useEffect } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
 import * as SystemUI from 'expo-system-ui';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { firebaseConfigStatus } from '../config/firebaseConfig';
 import { SignInScreen } from '../features/auth/SignInScreen';
@@ -29,8 +29,11 @@ function AppShellContent() {
 
   useEffect(() => {
     SystemUI.setBackgroundColorAsync(colors.canvas).catch(() => undefined);
-    NavigationBar.setBackgroundColorAsync(colors.surface).catch(() => undefined);
-    NavigationBar.setButtonStyleAsync(isDark ? 'light' : 'dark').catch(() => undefined);
+    if (Platform.OS === 'android') {
+      NavigationBar.setPositionAsync('relative').catch(() => undefined);
+      NavigationBar.setBackgroundColorAsync(colors.surface).catch(() => undefined);
+      NavigationBar.setButtonStyleAsync(isDark ? 'light' : 'dark').catch(() => undefined);
+    }
   }, [colors.canvas, colors.surface, isDark]);
 
   return (

@@ -14,31 +14,41 @@ import {
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { addDoc, collection, deleteDoc, doc, serverTimestamp, updateDoc } from 'firebase/firestore';
+import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
+import { addDoc, collection, deleteDoc, doc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
 import { db } from '../../lib/firebase/client';
 import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import { useRealtimeClock } from '../../shared/hooks/useRealtimeClock';
-import type { TenantRecord } from '../../shared/types/records';
+import type { MeterReadingRecord, TenantRecord } from '../../shared/types/records';
 import { toNumber } from '../../shared/utils/money';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import { businessTypeOptions, getBusinessType } from './businessTypes';
 import { CustomerCard } from './CustomerCard';
-import { customerStatusOptions, getCustomerStatus, matchesCustomerSearch } from './customerUtils';
+import { customerStatusOptions, getCustomerStatus, getCustomerStatusGroup, matchesCustomerSearch } from './customerUtils';
 import { FilterPill } from './FilterPill';
+import { LifecycleMeterSheet, type LifecycleMeterResult } from './LifecycleMeterSheet';
 import { getRoomOccupancy, getRoomSummary, isRoomCustomer, parseRoomLabel, roomNumbers } from './roomUtils';
 
 type CustomerDraft = {
   additionalGuests: string[];
   businessType: string;
   documentId: string;
+  documentType: string;
   email: string;
   idProof: string | null;
   idProofName: string | null;
   idProofSize: number;
   idProofType: string | null;
+  idProofBack: string | null;
+  idProofBackName: string | null;
+  idProofBackSize: number;
+  customerPhoto: string | null;
+  customerPhotoName: string | null;
+  customerPhotoSize: number;
   moveInDate: string;
   moveInTime: string;
   moveOutDate: string;
@@ -52,15 +62,28 @@ type CustomerDraft = {
   status: string;
 };
 
+type PendingMeterLifecycle = {
+  action: 'check-in' | 'check-out';
+  customer: TenantRecord;
+  minimumReading: number;
+};
+
 const initialForm = {
   additionalGuests: [] as string[],
   businessType: 'pg',
   documentId: '',
+  documentType: 'aadhaar',
   email: '',
   idProof: null as string | null,
   idProofName: null as string | null,
   idProofSize: 0,
   idProofType: null as string | null,
+  idProofBack: null as string | null,
+  idProofBackName: null as string | null,
+  idProofBackSize: 0,
+  customerPhoto: null as string | null,
+  customerPhotoName: null as string | null,
+  customerPhotoSize: 0,
   moveInDate: '',
   moveInTime: '12:00',
   moveOutDate: '',
@@ -71,16 +94,54 @@ const initialForm = {
   room: '',
   roomType: 'single',
   services: [] as string[],
-  status: 'active',
+  status: 'booked',
 };
 
 const activeAllocationStatuses = ['active', 'booked', 'checked in', 'occupied'];
+const documentTypes = [
+  { label: 'Aadhaar Card', needsBack: true, value: 'aadhaar' },
+  { label: 'PAN Card', needsBack: false, value: 'pan' },
+  { label: 'Driving Licence', needsBack: true, value: 'driving-licence' },
+  { label: 'Voter ID', needsBack: true, value: 'voter-id' },
+  { label: 'Passport', needsBack: false, value: 'passport' },
+];
+
+type CustomerPhotoTarget = 'customer' | 'document-front' | 'document-back';
+
+const validationPatterns = {
+  aadhaar: /^\d{12}$/,
+  pan: /^[A-Z]{5}\d{4}[A-Z]$/,
+  'driving-licence': /^[A-Z]{2}\d{2}[A-Z0-9]{7,13}$/,
+  'voter-id': /^[A-Z]{3}\d{7}$/,
+  passport: /^[A-Z][1-9]\d{6}$/,
+};
+
+function normalizePhone(value: string) {
+  const digits = value.replace(/\D/g, '');
+  return digits.length === 12 && digits.startsWith('91') ? digits.slice(2) : digits;
+}
+
+function isValidPersonName(value: string) {
+  return /^[\p{L}][\p{L}\s.'-]{1,79}$/u.test(value.trim());
+}
+
+function isValidDateText(value: string) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return false;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return date.getFullYear() === Number(match[1]) && date.getMonth() === Number(match[2]) - 1 && date.getDate() === Number(match[3]);
+}
+
+function isValidTimeText(value: string) {
+  return /^([01]\d|2[0-3]):[0-5]\d$/.test(value);
+}
 
 export function CustomersScreen() {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
   const styles = createStyles(colors);
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
+  const meterReadings = useFirestoreCollection<MeterReadingRecord>('meterReadings', { sortBy: 'createdAt' });
   const now = useRealtimeClock();
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
@@ -96,17 +157,18 @@ export function CustomersScreen() {
   const [checkingInId, setCheckingInId] = useState('');
   const [actionError, setActionError] = useState('');
   const [viewingProof, setViewingProof] = useState<TenantRecord | null>(null);
+  const [pendingMeterLifecycle, setPendingMeterLifecycle] = useState<PendingMeterLifecycle | null>(null);
   const roomSummary = getRoomSummary(tenants.data, now);
   const roomOccupancy = getRoomOccupancy(tenants.data, now);
   const filtered = useMemo(
     () =>
       tenants.data.filter((tenant) => {
         const typeMatches = typeFilter ? (tenant.businessType || 'pg') === typeFilter : true;
-        const statusMatches = statusFilter ? getCustomerStatus(tenant) === statusFilter : true;
+        const statusMatches = statusFilter ? getCustomerStatusGroup(tenant) === statusFilter : true;
         const roomMode = mode === 'Rooms' ? ['pg', 'hotel'].includes(String(tenant.businessType || 'pg')) && Boolean(tenant.room) : true;
         const roomMatches = selectedRoom ? parseRoomLabel(tenant.room).room === selectedRoom : true;
         const needsAttention = mode === 'Needs attention'
-          ? ['booked', 'checked in'].includes(getCustomerStatus(tenant)) || !tenant.room
+          ? getCustomerStatusGroup(tenant) === 'upcoming' || !tenant.room
           : true;
 
         return typeMatches && statusMatches && roomMode && roomMatches && needsAttention && matchesCustomerSearch(tenant, search);
@@ -132,11 +194,22 @@ export function CustomersScreen() {
   }
 
   async function saveCustomer(payload: CustomerDraft) {
+    const previousStatus = editingCustomer ? getCustomerStatus(editingCustomer) : '';
+    const leavingCheckedInState = ['active', 'checked in', 'occupied'].includes(previousStatus) && payload.status !== previousStatus;
+    const isMeterLifecycleTransition = editingCustomer
+      && String(editingCustomer.businessType || 'pg') === 'pg'
+      && payload.status !== previousStatus
+      && (['checked in', 'checked out'].includes(payload.status) || leavingCheckedInState);
+
+    if (isMeterLifecycleTransition) {
+      Alert.alert(t('Meter photo required'), t('Use the Check in or Check out action from customer details so the meter photo and reading are saved.'));
+      return;
+    }
+
     setSaving(true);
     setActionError('');
 
     try {
-      const previousStatus = editingCustomer ? getCustomerStatus(editingCustomer) : '';
       const now = new Date();
       const localDate = getLocalDate(now);
       const localTime = now.toTimeString().slice(0, 5);
@@ -169,6 +242,12 @@ export function CustomersScreen() {
           idProofName: payload.idProofName || null,
           idProofSize: payload.idProofSize || 0,
           idProofType: payload.idProofType || null,
+          idProofBack: payload.idProofBack || null,
+          idProofBackName: payload.idProofBackName || null,
+          idProofBackSize: payload.idProofBackSize || 0,
+          customerPhoto: payload.customerPhoto || null,
+          customerPhotoName: payload.customerPhotoName || null,
+          customerPhotoSize: payload.customerPhotoSize || 0,
         });
       }
 
@@ -201,69 +280,98 @@ export function CustomersScreen() {
     ]);
   }
 
-  async function checkOutCustomer(customer: TenantRecord) {
-    setCheckingOutId(customer.id);
+  function getRoomReading(customer: TenantRecord) {
+    const room = parseRoomLabel(customer.room).room;
+    const roomReading = meterReadings.data.find((reading) => parseRoomLabel(reading.tenantRoom).room === room);
+    return toNumber(roomReading?.currentReading);
+  }
+
+  function getCheckInReading(customer: TenantRecord) {
+    const storedReading = toNumber(customer.checkInMeterReading);
+    if (storedReading) return storedReading;
+
+    const checkInReading = meterReadings.data.find(
+      (reading) => reading.tenantId === customer.id && reading.readingType === 'check-in',
+    );
+    return toNumber(checkInReading?.currentReading) || getRoomReading(customer);
+  }
+
+  function startMeterLifecycle(customer: TenantRecord, action: PendingMeterLifecycle['action']) {
+    setActionError('');
+    setPendingMeterLifecycle({
+      action,
+      customer,
+      minimumReading: action === 'check-out' ? getCheckInReading(customer) : getRoomReading(customer),
+    });
+  }
+
+  async function completeMeterLifecycle(result: LifecycleMeterResult) {
+    if (!pendingMeterLifecycle) return;
+
+    const { action, customer, minimumReading } = pendingMeterLifecycle;
+    const checkingIn = action === 'check-in';
+    const setBusy = checkingIn ? setCheckingInId : setCheckingOutId;
+    setBusy(customer.id);
     setActionError('');
 
     try {
-      const now = new Date();
-      const localDate = getLocalDate(now);
+      const eventTime = new Date();
+      const readingRef = doc(collection(db, 'meterReadings'));
+      const batch = writeBatch(db);
+      const unitsConsumed = checkingIn ? 0 : Math.max(0, result.reading - minimumReading);
 
-      await updateDoc(doc(db, 'tenants', customer.id), {
+      batch.set(readingRef, {
+        billAmount: unitsConsumed * 10,
+        createdAt: serverTimestamp(),
+        currentReading: result.reading,
+        month: `${eventTime.getFullYear()}-${String(eventTime.getMonth() + 1).padStart(2, '0')}`,
+        note: checkingIn ? 'Check-in meter photo' : 'Check-out meter photo',
+        ocrText: result.ocrText,
+        photo: result.photo,
+        photoSize: result.photoSize,
+        previousReading: minimumReading,
+        ratePerUnit: 10,
+        readingSource: 'ocr-locked',
+        readingType: action,
+        tenantId: customer.id,
+        tenantName: customer.name || customer.fullName || customer.tenantName || 'Unnamed customer',
+        tenantRoom: customer.room || '',
+        unitsConsumed,
+      });
+
+      batch.update(doc(db, 'tenants', customer.id), checkingIn ? {
+        checkedInAt: serverTimestamp(),
+        checkInMeterReading: result.reading,
+        checkInMeterReadingId: readingRef.id,
+        moveInDate: getLocalDate(eventTime),
+        moveInTime: eventTime.toTimeString().slice(0, 5),
+        status: 'checked in',
+        updatedAt: serverTimestamp(),
+      } : {
         checkedOutAt: serverTimestamp(),
-        moveOutDate: localDate,
-        moveOutTime: now.toTimeString().slice(0, 5),
+        checkOutMeterReading: result.reading,
+        checkOutMeterReadingId: readingRef.id,
+        moveOutDate: getLocalDate(eventTime),
+        moveOutTime: eventTime.toTimeString().slice(0, 5),
         status: 'checked out',
         updatedAt: serverTimestamp(),
       });
-    } catch (checkoutError) {
-      setActionError(checkoutError instanceof Error ? checkoutError.message : t('Could not check out customer.'));
+
+      await batch.commit();
+      setPendingMeterLifecycle(null);
+    } catch (lifecycleError) {
+      setActionError(lifecycleError instanceof Error ? lifecycleError.message : t('Could not save meter lifecycle.'));
     } finally {
-      setCheckingOutId('');
-    }
-  }
-
-  async function checkInCustomer(customer: TenantRecord) {
-    setCheckingInId(customer.id);
-    setActionError('');
-
-    try {
-      const now = new Date();
-
-      await updateDoc(doc(db, 'tenants', customer.id), {
-        checkedInAt: serverTimestamp(),
-        moveInDate: getLocalDate(now),
-        moveInTime: now.toTimeString().slice(0, 5),
-        status: 'checked in',
-        updatedAt: serverTimestamp(),
-      });
-    } catch (checkinError) {
-      setActionError(checkinError instanceof Error ? checkinError.message : t('Could not check in customer.'));
-    } finally {
-      setCheckingInId('');
+      setBusy('');
     }
   }
 
   function confirmCheckIn(customer: TenantRecord) {
-    Alert.alert(
-      t('Check in customer?'),
-      `${customer.name || t('This customer')} ${t('will be checked in to the assigned room.')}`,
-      [
-        { text: t('Cancel'), style: 'cancel' },
-        { text: t('Check in'), onPress: () => checkInCustomer(customer) },
-      ],
-    );
+    startMeterLifecycle(customer, 'check-in');
   }
 
   function confirmCheckOut(customer: TenantRecord) {
-    Alert.alert(
-      t('Check out customer?'),
-      `${customer.name || t('This customer')} ${t('will be checked out and the room will become available.')}`,
-      [
-        { text: t('Cancel'), style: 'cancel' },
-        { text: t('Check out'), onPress: () => checkOutCustomer(customer) },
-      ],
-    );
+    startMeterLifecycle(customer, 'check-out');
   }
 
   return (
@@ -283,6 +391,16 @@ export function CustomersScreen() {
         />
       ) : null}
       <IdProofPreview onClose={() => setViewingProof(null)} proof={viewingProof} styles={styles} />
+      {pendingMeterLifecycle ? (
+        <LifecycleMeterSheet
+          action={pendingMeterLifecycle.action}
+          customer={pendingMeterLifecycle.customer}
+          minimumReading={pendingMeterLifecycle.minimumReading}
+          onClose={() => setPendingMeterLifecycle(null)}
+          onSubmit={completeMeterLifecycle}
+          saving={checkingInId === pendingMeterLifecycle.customer.id || checkingOutId === pendingMeterLifecycle.customer.id}
+        />
+      ) : null}
 
       <View style={styles.hero}>
         <View style={styles.heroTop}>
@@ -312,8 +430,14 @@ export function CustomersScreen() {
       </View>
 
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.roomRail}>
-        {roomOccupancy.slice(0, 10).map((room) => (
-          <Pressable
+        {roomOccupancy.map((room) => {
+          const roomLabel = room.businessType === 'hotel'
+            ? 'Hotel occupied'
+            : room.businessType === 'pg'
+              ? room.availableBeds > 0 ? 'PG - 1 spot left' : 'PG full'
+              : 'Available';
+
+          return <Pressable
             accessibilityRole="button"
             key={room.room}
             onPress={() => {
@@ -327,16 +451,16 @@ export function CustomersScreen() {
             ]}
           >
             <Text style={[styles.roomNumber, room.status === 'Full' && styles.roomTextFull]}>{t('Room')} {room.room}</Text>
-            <Text style={[styles.roomStatus, room.status === 'Full' && styles.roomStatusFull]}>{t(room.status)}</Text>
+            <Text style={[styles.roomStatus, room.status === 'Full' && styles.roomStatusFull]}>{t(roomLabel)}</Text>
             <Text style={[styles.roomMeta, room.status === 'Full' && styles.roomMetaFull]}>
               {room.businessType === 'hotel'
                 ? `${t('Hotel')} / ${room.guestCount} ${t(room.guestCount === 1 ? 'guest' : 'guests')}`
                 : room.businessType === 'pg'
-                  ? `${t('PG')} / ${room.occupants.length}/${room.capacity}`
-                  : t('Available for PG or Hotel')}
+                  ? `${room.occupants.length} ${t(room.occupants.length === 1 ? 'tenant' : 'tenants')}`
+                  : t('PG or Hotel')}
             </Text>
-          </Pressable>
-        ))}
+          </Pressable>;
+        })}
       </ScrollView>
 
       {selectedRoom ? (
@@ -495,11 +619,18 @@ function CustomerFormSheet({
     additionalGuests: Array.isArray(customer?.additionalGuests) ? customer.additionalGuests : [],
     businessType: customer?.businessType || initialForm.businessType,
     documentId: customer?.documentId || '',
+    documentType: customer?.documentType || initialForm.documentType,
     email: customer?.email || '',
     idProof: customer?.idProof || null,
     idProofName: customer?.idProofName || null,
     idProofSize: customer?.idProofSize || 0,
     idProofType: customer?.idProofType || null,
+    idProofBack: customer?.idProofBack || null,
+    idProofBackName: customer?.idProofBackName || null,
+    idProofBackSize: customer?.idProofBackSize || 0,
+    customerPhoto: customer?.customerPhoto || null,
+    customerPhotoName: customer?.customerPhotoName || null,
+    customerPhotoSize: customer?.customerPhotoSize || 0,
     moveInDate: customer?.moveInDate || '',
     moveInTime: customer?.moveInTime || '12:00',
     moveOutDate: customer?.moveOutDate || '',
@@ -510,11 +641,12 @@ function CustomerFormSheet({
     room: customer?.room || '',
     roomType: customer?.roomType || 'single',
     services: Array.isArray(customer?.services) ? customer.services : [],
-    status: customer?.status || 'active',
+    status: customer?.status || initialForm.status,
   }));
   const [formError, setFormError] = useState('');
   const [formStep, setFormStep] = useState<CustomerFormStep>('business');
   const activeType = getBusinessType(form.businessType);
+  const selectedDocument = documentTypes.find((item) => item.value === form.documentType) || documentTypes[0];
   const currentAllocation = getAllocationKey(customer?.room, form.businessType);
   const allocationNumbers = form.businessType === 'library' ? [] : roomNumbers;
   const allocationOccupants = customers.filter((item) => {
@@ -560,6 +692,13 @@ function CustomerFormSheet({
   const librarySeatAvailable = form.businessType !== 'library' || selectedAllocationIsCurrent || selectedAllocationOpenSpots > 0;
   const librarySeatLooksValid = form.businessType !== 'library' || !selectedAllocation || /^[A-Z]\d{2,3}$/.test(selectedAllocation);
   const canContinueAllocation = Boolean(form.name.trim() && form.phone.trim() && form.room.trim() && toNumber(form.rent));
+  const roomLifecycleBusiness = ['pg', 'hotel'].includes(form.businessType);
+  const visibleStatusOptions = activeType.statusOptions.filter((status) => {
+    if (!roomLifecycleBusiness) return true;
+    if (status.value === form.status) return true;
+    if (!customer || getCustomerStatus(customer) === 'booked') return ['booked', 'cancelled'].includes(status.value);
+    return false;
+  });
 
   function updateField(name: keyof typeof form, value: string | string[]) {
     setForm((current) => ({
@@ -693,61 +832,129 @@ function CustomerFormSheet({
     }));
   }
 
-  async function pickIdProof() {
+  function choosePhotoSource(target: CustomerPhotoTarget) {
+    Alert.alert(t('Add photo'), t('Choose where to get the photo from.'), [
+      { text: t('Camera'), onPress: () => pickCustomerImage(target, 'camera') },
+      { text: t('Gallery'), onPress: () => pickCustomerImage(target, 'gallery') },
+      { text: t('Cancel'), style: 'cancel' },
+    ]);
+  }
+
+  async function pickCustomerImage(target: CustomerPhotoTarget, source: 'camera' | 'gallery') {
     setFormError('');
 
-    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    const permission = source === 'camera'
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (!permission.granted) {
-      setFormError(t('Photo library permission is required to attach ID proof.'));
+      setFormError(t(source === 'camera' ? 'Camera permission is required to add this photo.' : 'Photo library permission is required to add this photo.'));
       return;
     }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
+    const options: ImagePicker.ImagePickerOptions = {
       allowsEditing: false,
-      base64: true,
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      quality: 0.55,
-    });
+      mediaTypes: ['images'],
+      quality: 0.75,
+    };
+    const result = source === 'camera'
+      ? await ImagePicker.launchCameraAsync(options)
+      : await ImagePicker.launchImageLibraryAsync(options);
 
     if (result.canceled) return;
 
     const asset = result.assets[0];
 
-    if (!asset?.base64) {
+    if (!asset?.uri) {
       setFormError(t('Could not read selected image.'));
       return;
     }
 
-    const mimeType = asset.mimeType || 'image/jpeg';
-    const approxBytes = Math.ceil((asset.base64.length * 3) / 4);
+    const context = ImageManipulator.manipulate(asset.uri);
+    context.resize({ width: 720 });
+    const rendered = await context.renderAsync();
+    const optimized = await rendered.saveAsync({ base64: true, compress: 0.35, format: SaveFormat.JPEG });
 
-    setForm((current) => ({
+    if (!optimized.base64) {
+      setFormError(t('Could not prepare selected image.'));
+      return;
+    }
+    if (optimized.base64.length > 240_000) {
+      setFormError(t('Photo is too large. Move closer and retake it.'));
+      return;
+    }
+
+    const photo = `data:image/jpeg;base64,${optimized.base64}`;
+    const photoSize = Math.ceil((optimized.base64.length * 3) / 4);
+    const photoName = `${target}-${Date.now()}.jpg`;
+
+    setForm((current) => target === 'customer' ? {
       ...current,
-      idProof: `data:${mimeType};base64,${asset.base64}`,
-      idProofName: asset.fileName || `id-proof-${Date.now()}.jpg`,
-      idProofSize: approxBytes,
-      idProofType: mimeType,
-    }));
+      customerPhoto: photo,
+      customerPhotoName: photoName,
+      customerPhotoSize: photoSize,
+    } : target === 'document-back' ? {
+      ...current,
+      idProofBack: photo,
+      idProofBackName: photoName,
+      idProofBackSize: photoSize,
+    } : {
+      ...current,
+      idProof: photo,
+      idProofName: photoName,
+      idProofSize: photoSize,
+      idProofType: 'image/jpeg',
+    });
   }
 
-  function removeIdProof() {
-    setForm((current) => ({
+  function removePhoto(target: CustomerPhotoTarget) {
+    setForm((current) => target === 'customer' ? {
+      ...current,
+      customerPhoto: null,
+      customerPhotoName: null,
+      customerPhotoSize: 0,
+    } : target === 'document-back' ? {
+      ...current,
+      idProofBack: null,
+      idProofBackName: null,
+      idProofBackSize: 0,
+    } : {
       ...current,
       idProof: null,
       idProofName: null,
       idProofSize: 0,
       idProofType: null,
-    }));
+    });
     setFormError('');
   }
 
   function submit() {
     const rent = toNumber(form.rent);
+    const normalizedDocumentId = form.documentId.replace(/[\s-]/g, '').toUpperCase();
+    const normalizedPhone = normalizePhone(form.phone);
+    const documentPattern = validationPatterns[form.documentType as keyof typeof validationPatterns];
 
     if (!form.name.trim() || !form.phone.trim() || !form.room.trim() || !rent) {
       setFormStep('allocation');
       setFormError(`${t('Name, phone,')} ${t(activeType.unitLabel).toLowerCase()} ${t('and amount are required.')}`);
+      return;
+    }
+
+    if (!isValidPersonName(form.name)) {
+      setFormStep('allocation');
+      setFormError(t('Enter a valid customer name using letters only.'));
+      return;
+    }
+
+    if (!/^[6-9]\d{9}$/.test(normalizedPhone)) {
+      setFormStep('allocation');
+      setFormError(t('Enter a valid 10-digit Indian mobile number.'));
+      return;
+    }
+
+    if (!Number.isFinite(rent) || rent <= 0 || rent > 10_000_000) {
+      setFormStep('allocation');
+      setFormError(t('Enter a valid amount greater than zero.'));
       return;
     }
 
@@ -769,23 +976,78 @@ function CustomerFormSheet({
       return;
     }
 
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(form.email.trim())) {
+      setFormStep('details');
+      setFormError(t('Enter a valid email address.'));
+      return;
+    }
+
+    if (form.moveInDate && !isValidDateText(form.moveInDate)) {
+      setFormStep('details');
+      setFormError(t('Select a valid move-in date.'));
+      return;
+    }
+
+    if (form.moveOutDate && !isValidDateText(form.moveOutDate)) {
+      setFormStep('details');
+      setFormError(t('Select a valid move-out date.'));
+      return;
+    }
+
+    if (form.moveInDate && form.moveOutDate && form.moveOutDate < form.moveInDate) {
+      setFormStep('details');
+      setFormError(t('Move-out date cannot be before move-in date.'));
+      return;
+    }
+
+    if (activeType.usesTimeFields && (!isValidTimeText(form.moveInTime) || !isValidTimeText(form.moveOutTime))) {
+      setFormStep('details');
+      setFormError(t('Enter time in 24-hour HH:mm format.'));
+      return;
+    }
+
+    if (!normalizedDocumentId || !documentPattern?.test(normalizedDocumentId)) {
+      setFormStep('details');
+      setFormError(`${t('Enter a valid document number for')} ${t(selectedDocument.label)}.`);
+      return;
+    }
+
+    if (form.businessType === 'hotel' && form.additionalGuests.some((guest) => guest.trim() && !isValidPersonName(guest))) {
+      setFormStep('allocation');
+      setFormError(t('Enter valid additional guest names using letters only.'));
+      return;
+    }
+
+    if (!form.customerPhoto || !form.idProof || (selectedDocument.needsBack && !form.idProofBack)) {
+      setFormStep('details');
+      setFormError(t('Customer photo and required document photos must be added.'));
+      return;
+    }
+
     onSubmit({
       additionalGuests: form.businessType === 'hotel'
         ? form.additionalGuests.map((guest) => guest.trim()).filter(Boolean)
         : [],
       businessType: form.businessType,
-      documentId: form.documentId.trim(),
+      documentId: normalizedDocumentId,
+      documentType: form.documentType,
       email: form.email.trim(),
       idProof: form.idProof,
       idProofName: form.idProofName,
       idProofSize: form.idProofSize,
       idProofType: form.idProofType,
+      idProofBack: form.idProofBack,
+      idProofBackName: form.idProofBackName,
+      idProofBackSize: form.idProofBackSize,
+      customerPhoto: form.customerPhoto,
+      customerPhotoName: form.customerPhotoName,
+      customerPhotoSize: form.customerPhotoSize,
       moveInDate: form.moveInDate.trim(),
       moveInTime: form.moveInTime.trim(),
       moveOutDate: form.moveOutDate.trim(),
       moveOutTime: form.moveOutTime.trim(),
       name: form.name.trim(),
-      phone: form.phone.trim(),
+      phone: normalizedPhone,
       rent,
       room: form.room.trim(),
       roomType: form.roomType,
@@ -965,10 +1227,23 @@ function CustomerFormSheet({
 
                 <Text style={styles.formLabel}>{t('Status')}</Text>
                 <View style={styles.sheetFilters}>
-                  {activeType.statusOptions
+                  {visibleStatusOptions
                     .filter((item, index, list) => list.findIndex((entry) => entry.value === item.value) === index && item.value)
                     .map((status) => (
-                      <FilterPill active={form.status === status.value} key={status.value} label={status.label} onPress={() => updateField('status', status.value)} />
+                      <FilterPill
+                        active={form.status === status.value}
+                        key={status.value}
+                        label={roomLifecycleBusiness
+                          ? status.value === 'booked'
+                            ? 'Upcoming'
+                            : status.value === 'cancelled'
+                              ? 'Cancelled'
+                              : ['checked out', 'inactive'].includes(status.value)
+                                ? 'Completed'
+                                : 'Staying'
+                          : status.label}
+                        onPress={() => updateField('status', status.value)}
+                      />
                     ))}
                 </View>
               </>
@@ -982,11 +1257,11 @@ function CustomerFormSheet({
 
                 <View style={styles.formGrid}>
                   <TextField keyboardType="email-address" label="Email" onChangeText={(value) => updateField('email', value)} placeholder="Email optional" value={form.email} />
-                  <TextField label={activeType.startDateLabel} onChangeText={(value) => updateField('moveInDate', value)} placeholder="YYYY-MM-DD" value={form.moveInDate} />
+                  <CalendarField label={t(activeType.startDateLabel)} onChange={(value) => updateField('moveInDate', value)} styles={styles} value={form.moveInDate} />
                   {activeType.usesTimeFields ? (
                     <TextField label="Check-in time" onChangeText={(value) => updateField('moveInTime', value)} placeholder="HH:mm" value={form.moveInTime} />
                   ) : null}
-                  <TextField label={activeType.endDateLabel} onChangeText={(value) => updateField('moveOutDate', value)} placeholder="YYYY-MM-DD" value={form.moveOutDate} />
+                  <CalendarField label={t(activeType.endDateLabel)} onChange={(value) => updateField('moveOutDate', value)} styles={styles} value={form.moveOutDate} />
                   {activeType.usesTimeFields ? (
                     <TextField label="Check-out time" onChangeText={(value) => updateField('moveOutTime', value)} placeholder="HH:mm" value={form.moveOutTime} />
                   ) : null}
@@ -1000,32 +1275,27 @@ function CustomerFormSheet({
                 </View>
 
                 <Text style={styles.formLabel}>{t('Document ID')}</Text>
-                <TextField autoCapitalize="characters" label="Document number" onChangeText={(value) => updateField('documentId', value)} placeholder="Aadhaar, PAN, passport..." value={form.documentId} />
+                <View style={styles.documentFields}>
+                  <View style={styles.sheetFilters}>
+                    {documentTypes.map((document) => (
+                      <FilterPill
+                        active={form.documentType === document.value}
+                        key={document.value}
+                        label={document.label}
+                        onPress={() => {
+                          updateField('documentType', document.value);
+                          if (!document.needsBack) removePhoto('document-back');
+                        }}
+                      />
+                    ))}
+                  </View>
+                  <TextField autoCapitalize="characters" label={`${selectedDocument.label} number`} onChangeText={(value) => updateField('documentId', value)} placeholder="Document number" value={form.documentId} />
 
-                <Text style={styles.formLabel}>{t('Document image')}</Text>
-                <View style={styles.proofBox}>
-                  {form.idProof ? (
-                    <>
-                      <Text style={styles.proofTitle}>{form.idProofName || t('ID proof attached')}</Text>
-                      <Text style={styles.proofMeta}>{Math.round((form.idProofSize || 0) / 1024)} KB</Text>
-                      <View style={styles.proofActions}>
-                        <Pressable disabled={saving} onPress={pickIdProof} style={styles.proofAction}>
-                          <Text style={styles.proofActionText}>{t('Replace')}</Text>
-                        </Pressable>
-                        <Pressable disabled={saving} onPress={removeIdProof} style={styles.proofDangerAction}>
-                          <Text style={styles.proofDangerText}>{t('Remove')}</Text>
-                        </Pressable>
-                      </View>
-                    </>
-                  ) : (
-                    <>
-                      <Text style={styles.proofTitle}>{t('No ID proof attached')}</Text>
-                      <Text style={styles.proofMeta}>{t('Attach a photo from the device gallery.')}</Text>
-                      <Pressable disabled={saving} onPress={pickIdProof} style={styles.proofPrimaryAction}>
-                        <Text style={styles.proofPrimaryText}>{t('Attach ID proof')}</Text>
-                      </Pressable>
-                    </>
-                  )}
+                  <PhotoUploadBox label={t('Customer photo')} name={form.customerPhotoName} onPick={() => choosePhotoSource('customer')} onRemove={() => removePhoto('customer')} photo={form.customerPhoto} size={form.customerPhotoSize} styles={styles} />
+                  <PhotoUploadBox label={`${t(selectedDocument.label)} ${t('front photo')}`} name={form.idProofName} onPick={() => choosePhotoSource('document-front')} onRemove={() => removePhoto('document-front')} photo={form.idProof} size={form.idProofSize} styles={styles} />
+                  {selectedDocument.needsBack ? (
+                    <PhotoUploadBox label={`${t(selectedDocument.label)} ${t('back photo')}`} name={form.idProofBackName} onPick={() => choosePhotoSource('document-back')} onRemove={() => removePhoto('document-back')} photo={form.idProofBack} size={form.idProofBackSize} styles={styles} />
+                  ) : null}
                 </View>
               </>
             ) : null}
@@ -1049,6 +1319,112 @@ function CustomerFormSheet({
   );
 }
 
+function PhotoUploadBox({ label, name, onPick, onRemove, photo, size, styles }: {
+  label: string;
+  name: string | null;
+  onPick: () => void;
+  onRemove: () => void;
+  photo: string | null;
+  size: number;
+  styles: ReturnType<typeof createStyles>;
+}) {
+  const { t } = useLanguage();
+
+  return (
+    <View style={styles.proofBox}>
+      <Text style={styles.proofTitle}>{label}</Text>
+      {photo ? (
+        <>
+          <Image resizeMode="cover" source={{ uri: photo }} style={styles.proofFormPreview} />
+          <Text style={styles.proofMeta}>{name || label} / {Math.round(size / 1024)} KB</Text>
+          <View style={styles.proofActions}>
+            <Pressable onPress={onPick} style={styles.proofAction}><Text style={styles.proofActionText}>{t('Replace')}</Text></Pressable>
+            <Pressable onPress={onRemove} style={styles.proofDangerAction}><Text style={styles.proofDangerText}>{t('Remove')}</Text></Pressable>
+          </View>
+        </>
+      ) : (
+        <>
+          <Text style={styles.proofMeta}>{t('Camera or gallery photo required.')}</Text>
+          <Pressable onPress={onPick} style={styles.proofPrimaryAction}><Text style={styles.proofPrimaryText}>{t('Add photo')}</Text></Pressable>
+        </>
+      )}
+    </View>
+  );
+}
+
+function CalendarField({ label, onChange, styles, value }: {
+  label: string;
+  onChange: (value: string) => void;
+  styles: ReturnType<typeof createStyles>;
+  value: string;
+}) {
+  const { t } = useLanguage();
+  const parsed = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const initialDate = parsed ? new Date(Number(parsed[1]), Number(parsed[2]) - 1, 1) : new Date();
+  const [open, setOpen] = useState(false);
+  const [visibleMonth, setVisibleMonth] = useState(initialDate);
+  const year = visibleMonth.getFullYear();
+  const month = visibleMonth.getMonth();
+  const firstWeekday = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const cells = Array.from({ length: 42 }, (_, index) => {
+    const day = index - firstWeekday + 1;
+    return day > 0 && day <= daysInMonth ? day : 0;
+  });
+  const monthTitle = visibleMonth.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+
+  function chooseDate(day: number) {
+    const selected = new Date(year, month, day);
+    onChange(getLocalDate(selected));
+    setOpen(false);
+  }
+
+  function moveMonth(offset: number) {
+    setVisibleMonth(new Date(year, month + offset, 1));
+  }
+
+  return (
+    <>
+      <Pressable accessibilityRole="button" onPress={() => setOpen(true)} style={styles.calendarField}>
+        <Text style={styles.calendarFieldLabel}>{label}</Text>
+        <View style={styles.calendarFieldRow}>
+          <Text style={[styles.calendarFieldValue, !value && styles.calendarPlaceholder]}>{value || t('Select date')}</Text>
+          <Text style={styles.calendarIcon}>CAL</Text>
+        </View>
+      </Pressable>
+      {open ? (
+        <Modal animationType="fade" transparent visible onRequestClose={() => setOpen(false)}>
+          <View style={styles.calendarBackdrop}>
+            <View style={styles.calendarCard}>
+              <View style={styles.calendarHeader}>
+                <Pressable onPress={() => moveMonth(-1)} style={styles.calendarNav}><Text style={styles.calendarNavText}>‹</Text></Pressable>
+                <Text style={styles.calendarTitle}>{monthTitle}</Text>
+                <Pressable onPress={() => moveMonth(1)} style={styles.calendarNav}><Text style={styles.calendarNavText}>›</Text></Pressable>
+              </View>
+              <View style={styles.calendarGrid}>
+                {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((day, index) => <Text key={`${day}-${index}`} style={styles.calendarWeekday}>{day}</Text>)}
+                {cells.map((day, index) => {
+                  const dateValue = day ? getLocalDate(new Date(year, month, day)) : '';
+                  const selected = dateValue === value;
+                  return day ? (
+                    <Pressable key={index} onPress={() => chooseDate(day)} style={[styles.calendarDay, selected && styles.calendarDaySelected]}>
+                      <Text style={[styles.calendarDayText, selected && styles.calendarDayTextSelected]}>{day}</Text>
+                    </Pressable>
+                  ) : <View key={index} style={styles.calendarDay} />;
+                })}
+              </View>
+              <View style={styles.calendarActions}>
+                {value ? <Pressable onPress={() => { onChange(''); setOpen(false); }} style={styles.calendarClear}><Text style={styles.calendarClearText}>{t('Clear')}</Text></Pressable> : <View />}
+                <Pressable onPress={() => setOpen(false)} style={styles.calendarDone}><Text style={styles.calendarDoneText}>{t('Close')}</Text></Pressable>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      ) : null}
+    </>
+  );
+}
+
 function IdProofPreview({
   onClose,
   proof,
@@ -1059,6 +1435,7 @@ function IdProofPreview({
   styles: ReturnType<typeof createStyles>;
 }) {
   const { t } = useLanguage();
+  const insets = useSafeAreaInsets();
 
   if (!proof) return null;
 
@@ -1066,21 +1443,25 @@ function IdProofPreview({
 
   return (
     <Modal animationType="fade" transparent visible onRequestClose={onClose}>
-      <View style={styles.previewBackdrop}>
-        <View style={styles.previewPanel}>
-          <Text style={styles.previewTitle}>{proof.idProofName || t('ID proof')}</Text>
-          {proof.idProofSize ? <Text style={styles.previewMeta}>{Math.round(proof.idProofSize / 1024)} KB</Text> : null}
-          {canPreview ? (
-            <Image resizeMode="contain" source={{ uri: proof.idProof || '' }} style={styles.previewImage} />
-          ) : (
-            <View style={styles.previewEmpty}>
-              <Text style={styles.previewEmptyText}>{t('Preview is available for image ID proofs.')}</Text>
-            </View>
-          )}
-          <Pressable onPress={onClose} style={styles.previewClose}>
+      <View style={[styles.previewBackdrop, { paddingBottom: Math.max(insets.bottom, spacing.xl), paddingTop: Math.max(insets.top, spacing.xl) }]}>
+        <View style={styles.previewHeader}>
+          <View style={styles.previewCopy}>
+            <Text style={styles.previewTitle}>{t('ID proof')}</Text>
+            <Text style={styles.previewMeta}>{proof.name || t('Customer')} / {proof.idProofName || t('Document image')}</Text>
+            {proof.idProofSize ? <Text style={styles.previewSize}>{Math.round(proof.idProofSize / 1024)} KB</Text> : null}
+          </View>
+          <Pressable accessibilityRole="button" onPress={onClose} style={styles.previewClose}>
             <Text style={styles.previewCloseText}>{t('Close')}</Text>
           </Pressable>
         </View>
+        {canPreview ? (
+          <Image resizeMode="contain" source={{ uri: proof.idProof || '' }} style={styles.previewImage} />
+        ) : (
+          <View style={styles.previewEmpty}>
+            <Text style={styles.previewEmptyText}>{t('Preview is available for image ID proofs.')}</Text>
+          </View>
+        )}
+        <Text style={styles.previewHint}>{t('Use the Android back button or Close to return.')}</Text>
       </View>
     </Modal>
   );
@@ -1135,6 +1516,36 @@ function createStyles(colors: AppColors) {
     fontSize: 13,
     fontWeight: typography.weight.black,
   },
+  calendarField: {
+    backgroundColor: colors.surfaceRaised,
+    borderColor: colors.borderSoft,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    minHeight: 64,
+    padding: spacing.md,
+  },
+  calendarFieldLabel: { color: colors.muted, fontSize: 11, fontWeight: typography.weight.black, textTransform: 'uppercase' },
+  calendarFieldRow: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: 7 },
+  calendarFieldValue: { color: colors.text, fontSize: 15, fontWeight: typography.weight.black },
+  calendarPlaceholder: { color: colors.muted },
+  calendarIcon: { color: colors.brand, fontSize: 11, fontWeight: typography.weight.black },
+  calendarBackdrop: { alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.62)', flex: 1, justifyContent: 'center', padding: spacing.lg },
+  calendarCard: { backgroundColor: colors.surface, borderRadius: radius.lg, maxWidth: 420, padding: spacing.lg, width: '100%' },
+  calendarHeader: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between' },
+  calendarTitle: { color: colors.text, fontSize: 18, fontWeight: typography.weight.black },
+  calendarNav: { alignItems: 'center', backgroundColor: colors.surfaceMuted, borderRadius: radius.md, height: 42, justifyContent: 'center', width: 42 },
+  calendarNavText: { color: colors.text, fontSize: 28, fontWeight: typography.weight.black },
+  calendarGrid: { flexDirection: 'row', flexWrap: 'wrap', marginTop: spacing.md },
+  calendarWeekday: { color: colors.muted, fontSize: 11, fontWeight: typography.weight.black, textAlign: 'center', width: '14.2857%' },
+  calendarDay: { alignItems: 'center', borderRadius: radius.sm, height: 40, justifyContent: 'center', marginTop: 4, width: '14.2857%' },
+  calendarDaySelected: { backgroundColor: colors.ink },
+  calendarDayText: { color: colors.text, fontSize: 13, fontWeight: typography.weight.bold },
+  calendarDayTextSelected: { color: colors.onBrand, fontWeight: typography.weight.black },
+  calendarActions: { alignItems: 'center', flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.lg },
+  calendarClear: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+  calendarClearText: { color: colors.danger, fontSize: 13, fontWeight: typography.weight.black },
+  calendarDone: { backgroundColor: colors.ink, borderRadius: radius.md, paddingHorizontal: spacing.lg, paddingVertical: spacing.sm },
+  calendarDoneText: { color: colors.onBrand, fontSize: 13, fontWeight: typography.weight.black },
   summaryGrid: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -1660,10 +2071,20 @@ function createStyles(colors: AppColors) {
     borderWidth: 1,
     padding: spacing.md,
   },
+  documentFields: {
+    gap: spacing.md,
+  },
   proofTitle: {
     color: colors.text,
     fontSize: 14,
     fontWeight: typography.weight.black,
+  },
+  proofFormPreview: {
+    borderRadius: radius.md,
+    height: 180,
+    marginBottom: spacing.md,
+    marginTop: spacing.md,
+    width: '100%',
   },
   proofMeta: {
     color: colors.muted,
@@ -1717,45 +2138,49 @@ function createStyles(colors: AppColors) {
     fontWeight: typography.weight.black,
   },
   previewBackdrop: {
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.68)',
+    backgroundColor: 'rgba(0,0,0,0.94)',
     flex: 1,
-    justifyContent: 'center',
-    padding: spacing.lg,
+    paddingHorizontal: spacing.lg,
   },
-  previewPanel: {
-    backgroundColor: colors.surface,
-    borderRadius: radius.lg,
-    maxHeight: '88%',
-    padding: spacing.lg,
-    width: '100%',
+  previewHeader: {
+    alignItems: 'flex-start',
+    flexDirection: 'row',
+    gap: spacing.md,
+    marginBottom: spacing.lg,
+  },
+  previewCopy: {
+    flex: 1,
   },
   previewTitle: {
-    color: colors.text,
-    fontSize: 18,
+    color: '#FFFFFF',
+    fontSize: 20,
     fontWeight: typography.weight.black,
   },
   previewMeta: {
-    color: colors.muted,
+    color: '#C8D4DE',
     fontSize: 13,
     fontWeight: typography.weight.bold,
+    lineHeight: 19,
     marginTop: spacing.xs,
   },
+  previewSize: {
+    color: '#A9B8C7',
+    fontSize: 12,
+    marginTop: 3,
+  },
   previewImage: {
-    backgroundColor: colors.ink,
-    borderRadius: radius.md,
-    height: 430,
-    marginTop: spacing.md,
+    flex: 1,
     width: '100%',
   },
   previewEmpty: {
-    backgroundColor: colors.surfaceMuted,
+    backgroundColor: 'rgba(255,255,255,0.08)',
     borderRadius: radius.md,
-    marginTop: spacing.md,
+    flex: 1,
+    justifyContent: 'center',
     padding: spacing.xl,
   },
   previewEmptyText: {
-    color: colors.muted,
+    color: '#C8D4DE',
     fontSize: 14,
     fontWeight: typography.weight.bold,
     lineHeight: 20,
@@ -1763,16 +2188,22 @@ function createStyles(colors: AppColors) {
   },
   previewClose: {
     alignItems: 'center',
-    backgroundColor: colors.ink,
+    backgroundColor: 'rgba(255,255,255,0.16)',
     borderRadius: radius.md,
-    marginTop: spacing.md,
-    minHeight: 44,
     justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
   },
   previewCloseText: {
-    color: colors.onBrand,
+    color: '#FFFFFF',
     fontSize: 13,
     fontWeight: typography.weight.black,
+  },
+  previewHint: {
+    color: '#A9B8C7',
+    fontSize: 12,
+    marginTop: spacing.md,
+    textAlign: 'center',
   },
   disabledAction: {
     opacity: 0.45,

@@ -8,6 +8,16 @@
     "jsEngine": "hermes",
     "newArchEnabled": false,
     "userInterfaceStyle": "automatic",
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Allow Kothari to photograph meter readings during check-in and check-out.",
+          "microphonePermission": false,
+          "photosPermission": "Allow Kothari to attach customer and meter photos."
+        }
+      ]
+    ],
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -18,7 +28,7 @@
     },
     "android": {
       "package": "com.kothari.mobile",
-      "versionCode": 6,
+      "versionCode": 8,
       "adaptiveIcon": {
         "backgroundColor": "#ECFEFF",
         "foregroundImage": "./assets/android-icon-foreground.png",

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
@@ -12,6 +12,7 @@ import type { AdminProfile } from '../../shared/types/admin';
 import { AppBadge } from '../../shared/components/AppBadge';
 import { ModuleCard } from '../../shared/components/ModuleCard';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
+import { FirestoreRefreshContext } from '../../shared/hooks/useFirestoreCollection';
 
 const primaryTabs = [
   { id: 'overview', label: 'Home', mark: 'H' },
@@ -27,6 +28,8 @@ type WorkspaceScreenProps = {
 
 export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
   const [activeTab, setActiveTab] = useState('overview');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
   const { colors } = useAppTheme();
   const { t } = useLanguage();
   const styles = createStyles(colors);
@@ -36,6 +39,12 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
     if (activeTab === 'more') return featureModules.filter((feature) => !['overview', 'tenants', 'payments'].includes(feature.id));
     return featureModules.filter((feature) => feature.id === activeTab);
   }, [activeTab]);
+
+  function refreshPage() {
+    setRefreshing(true);
+    setRefreshKey((current) => current + 1);
+    setTimeout(() => setRefreshing(false), 900);
+  }
 
   return (
     <View style={styles.screen}>
@@ -54,37 +63,44 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
         </Pressable>
       </View>
 
-      <ScrollView contentContainerStyle={styles.content} style={styles.scroller}>
-        {activeTab === 'overview' ? (
-          <OperationsOverviewScreen />
-        ) : activeTab === 'tenants' ? (
-          <CustomersScreen />
-        ) : activeTab === 'payments' ? (
-          <MoneyScreen />
-        ) : activeTab === 'more' ? (
-          <MoreScreen />
-        ) : (
-          <>
-            <View style={styles.heroPanel}>
-              <View style={styles.heroTop}>
-                <Text style={styles.heroTitle}>{t('Almost ready')}</Text>
-                <AppBadge label="Soon" />
+      <FirestoreRefreshContext.Provider value={refreshKey}>
+        <ScrollView
+          alwaysBounceVertical
+          contentContainerStyle={[styles.content, { paddingBottom: Math.max(insets.bottom, spacing.xl) }]}
+          refreshControl={<RefreshControl colors={[colors.brand]} onRefresh={refreshPage} refreshing={refreshing} tintColor={colors.brand} />}
+          style={styles.scroller}
+        >
+          {activeTab === 'overview' ? (
+            <OperationsOverviewScreen />
+          ) : activeTab === 'tenants' ? (
+            <CustomersScreen />
+          ) : activeTab === 'payments' ? (
+            <MoneyScreen />
+          ) : activeTab === 'more' ? (
+            <MoreScreen />
+          ) : (
+            <>
+              <View style={styles.heroPanel}>
+                <View style={styles.heroTop}>
+                  <Text style={styles.heroTitle}>{t('Almost ready')}</Text>
+                  <AppBadge label="Soon" />
+                </View>
+                <Text style={styles.heroText}>
+                  {t('This section is being prepared for day-to-day use.')}
+                </Text>
               </View>
-              <Text style={styles.heroText}>
-                {t('This section is being prepared for day-to-day use.')}
-              </Text>
-            </View>
 
-            <View style={styles.moduleList}>
-              {activeModules.map((feature) => (
-                <ModuleCard feature={feature} key={feature.id} />
-              ))}
-            </View>
-          </>
-        )}
-      </ScrollView>
+              <View style={styles.moduleList}>
+                {activeModules.map((feature) => (
+                  <ModuleCard feature={feature} key={feature.id} />
+                ))}
+              </View>
+            </>
+          )}
+        </ScrollView>
+      </FirestoreRefreshContext.Provider>
 
-      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>
+      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, Platform.OS === 'android' ? 48 : spacing.sm) }]}>
         <View style={styles.nav}>
           {primaryTabs.map((tab) => {
             const active = tab.id === activeTab;

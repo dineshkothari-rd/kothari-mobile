@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import { collection, onSnapshot } from 'firebase/firestore';
 
 import { db } from '../../lib/firebase/client';
@@ -9,6 +9,8 @@ type UseFirestoreCollectionOptions = {
   enabled?: boolean;
   sortBy?: string;
 };
+
+export const FirestoreRefreshContext = createContext(0);
 
 function getSortableValue(record: FirestoreRecord, sortBy?: string) {
   if (!sortBy) return 0;
@@ -48,6 +50,7 @@ export function useFirestoreCollection<TRecord extends FirestoreRecord>(
   options: UseFirestoreCollectionOptions = {},
 ) {
   const { direction = 'desc', enabled = true, sortBy } = options;
+  const refreshKey = useContext(FirestoreRefreshContext);
   const [data, setData] = useState<TRecord[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(Boolean(enabled));
@@ -81,7 +84,7 @@ export function useFirestoreCollection<TRecord extends FirestoreRecord>(
     );
 
     return unsubscribe;
-  }, [collectionName, direction, enabled, sortBy]);
+  }, [collectionName, direction, enabled, refreshKey, sortBy]);
 
   return { data, error, loading };
 }
