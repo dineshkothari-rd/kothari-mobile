@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { doc, serverTimestamp, updateDoc } from 'firebase/firestore';
 import { Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -13,6 +14,7 @@ import { AppBadge } from '../../shared/components/AppBadge';
 import { ModuleCard } from '../../shared/components/ModuleCard';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import { FirestoreRefreshContext } from '../../shared/hooks/useFirestoreCollection';
+import { db } from '../../lib/firebase/client';
 
 const primaryTabs = [
   { id: 'overview', label: 'Home', mark: 'H' },
@@ -35,6 +37,15 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
   const { t } = useLanguage();
   const styles = createStyles(colors);
   const insets = useSafeAreaInsets();
+
+  useEffect(() => {
+    if (admin.role !== 'staff' || admin.accessStatus !== 'invited') return;
+    updateDoc(doc(db, 'users', admin.uid), {
+      accessStatus: 'active',
+      activatedAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    }).catch(() => undefined);
+  }, [admin.accessStatus, admin.role, admin.uid]);
   const activeModules = useMemo(() => {
     if (activeTab === 'overview') return featureModules;
     if (activeTab === 'more') return featureModules.filter((feature) => !['overview', 'tenants', 'payments'].includes(feature.id));
@@ -89,7 +100,7 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
           ) : activeTab === 'payments' ? (
             <MoneyScreen />
           ) : activeTab === 'more' ? (
-            <MoreScreen onViewChange={setMoreView} view={moreView} />
+            <MoreScreen isAdmin={admin.role === 'admin'} onViewChange={setMoreView} view={moreView} />
           ) : (
             <>
               <View style={styles.heroPanel}>

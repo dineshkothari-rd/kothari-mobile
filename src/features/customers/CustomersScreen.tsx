@@ -21,7 +21,7 @@ import { addDoc, collection, doc, serverTimestamp, updateDoc, writeBatch } from 
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
-import { auth, db, getCustomerProvisioningAuth } from '../../lib/firebase/client';
+import { auth, db, getProvisioningAuth } from '../../lib/firebase/client';
 import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import { useRealtimeClock } from '../../shared/hooks/useRealtimeClock';
@@ -341,7 +341,7 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
         const actorUid = auth.currentUser?.uid;
         if (!actorUid) throw new Error(t('Please sign in again.'));
 
-        const provisioningAuth = getCustomerProvisioningAuth();
+        const provisioningAuth = getProvisioningAuth();
         let createdUser: User | undefined;
 
         try {

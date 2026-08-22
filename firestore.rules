@@ -28,8 +28,14 @@ service cloud.firestore {
       return signedIn() && (role() == 'admin' || legacyAdmin());
     }
 
+    function staffAccessAllowed() {
+      return role() == 'staff'
+        && get(/databases/$(database)/documents/users/$(request.auth.uid))
+          .data.get('accessStatus', 'active') in ['active', 'invited'];
+    }
+
     function staff() {
-      return signedIn() && (admin() || role() == 'staff');
+      return signedIn() && (admin() || staffAccessAllowed());
     }
 
     function customer() {
@@ -60,8 +66,18 @@ service cloud.firestore {
           .data.accessStatus == 'active';
     }
 
+    function staffActivatingUser(userId) {
+      return signedIn()
+        && request.auth.uid == userId
+        && resource.data.role == 'staff'
+        && resource.data.accessStatus == 'invited'
+        && request.resource.data.accessStatus == 'active'
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['accessStatus', 'activatedAt', 'updatedAt']);
+    }
+
     function staffRevokingCustomerUser() {
-      return role() == 'staff'
+      return staffAccessAllowed()
         && resource.data.role == 'customer'
         && request.resource.data.role == 'customer'
         && request.resource.data.accessStatus == 'revoked'
@@ -84,7 +100,7 @@ service cloud.firestore {
 
     function staffUpdatingTenantAccess() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
-      return role() == 'staff'
+      return staffAccessAllowed()
         && !changed.hasAny(['invitedAt', 'invitedBy', 'userId'])
         && (!changed.hasAny(['accessStatus'])
           || (request.resource.data.accessStatus == 'revoked'
@@ -97,7 +113,9 @@ service cloud.firestore {
       allow read: if admin() || (signedIn() && request.auth.uid == userId);
       allow create, update: if admin()
         && request.resource.data.role in ['admin', 'staff', 'customer'];
-      allow update: if customerActivatingUser(userId) || staffRevokingCustomerUser();
+      allow update: if customerActivatingUser(userId)
+        || staffActivatingUser(userId)
+        || staffRevokingCustomerUser();
       allow delete: if admin();
     }
 

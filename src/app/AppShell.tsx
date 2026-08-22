@@ -43,12 +43,10 @@ function AppShellContent() {
           <MissingConfigScreen />
         ) : session.status === 'checking' ? (
           <CheckingScreen styles={styles} colors={colors} />
+        ) : session.profile && (session.profile.accessStatus === 'suspended' || session.profile.accessStatus === 'revoked') ? (
+          <AccountAccessScreen accessStatus={session.profile.accessStatus} onSignOut={session.signOut} />
         ) : session.profile?.role === 'customer' ? (
-          session.profile.accessStatus === 'suspended' || session.profile.accessStatus === 'revoked' ? (
-            <CustomerAccessScreen accessStatus={session.profile.accessStatus} onSignOut={session.signOut} />
-          ) : (
-            <CustomerWorkspaceScreen onSignOut={session.signOut} profile={session.profile} />
-          )
+          <CustomerWorkspaceScreen onSignOut={session.signOut} profile={session.profile} />
         ) : session.profile ? (
           <WorkspaceScreen admin={session.profile} onSignOut={session.signOut} />
         ) : (
@@ -59,7 +57,7 @@ function AppShellContent() {
   );
 }
 
-function CustomerAccessScreen({ accessStatus, onSignOut }: { accessStatus: 'revoked' | 'suspended'; onSignOut: () => void }) {
+function AccountAccessScreen({ accessStatus, onSignOut }: { accessStatus: 'revoked' | 'suspended'; onSignOut: () => void }) {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
   const styles = createStyles(colors);
@@ -70,7 +68,7 @@ function CustomerAccessScreen({ accessStatus, onSignOut }: { accessStatus: 'revo
       <View style={styles.warningMark}><Text style={styles.warningMarkText}>!</Text></View>
       <Text style={styles.centerTitle}>{t(suspended ? 'Access suspended' : 'Access revoked')}</Text>
       <Text style={styles.centerText}>
-        {t(suspended ? 'Please contact the administrator to restore your access.' : 'This customer access is no longer active.')}
+        {t(suspended ? 'Please contact the administrator to restore your access.' : 'This account is no longer active.')}
       </Text>
       <Pressable accessibilityRole="button" onPress={onSignOut} style={styles.signOutButton}>
         <Text style={styles.signOutText}>{t('Logout')}</Text>

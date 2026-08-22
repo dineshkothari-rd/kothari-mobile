@@ -2,7 +2,7 @@ import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } fr
 import { doc, getDoc, onSnapshot } from 'firebase/firestore';
 
 import { auth, db } from '../../lib/firebase/client';
-import type { AppProfile, AppRole, CustomerAccessStatus } from '../../shared/types/admin';
+import type { AccountAccessStatus, AppProfile, AppRole } from '../../shared/types/admin';
 
 export function watchAuthState(callback: (user: User | null) => void) {
   return onAuthStateChanged(auth, callback);
@@ -18,8 +18,8 @@ function isAppRole(value: unknown): value is AppRole {
   return value === 'admin' || value === 'staff' || value === 'customer';
 }
 
-function getCustomerAccessStatus(value: unknown): CustomerAccessStatus {
-  return value === 'active' || value === 'suspended' || value === 'revoked' ? value : 'invited';
+function getAccountAccessStatus(value: unknown, fallback: AccountAccessStatus): AccountAccessStatus {
+  return value === 'active' || value === 'invited' || value === 'suspended' || value === 'revoked' ? value : fallback;
 }
 
 export async function getAppProfile(user: User | null): Promise<AppProfile | null> {
@@ -39,10 +39,12 @@ export async function getAppProfile(user: User | null): Promise<AppProfile | nul
     };
 
     if (role === 'customer') {
-      return customerId ? { ...base, accessStatus: getCustomerAccessStatus(data?.accessStatus), customerId, role } : null;
+      return customerId ? { ...base, accessStatus: getAccountAccessStatus(data?.accessStatus, 'invited'), customerId, role } : null;
     }
 
-    return { ...base, role };
+    if (role === 'staff' && !data) return null;
+
+    return { ...base, accessStatus: getAccountAccessStatus(data?.accessStatus, 'active'), role };
   }
 
   // Keep existing admin accounts working while roles are provisioned server-side.
@@ -53,6 +55,7 @@ export async function getAppProfile(user: User | null): Promise<AppProfile | nul
 
   return {
     email: user.email,
+    accessStatus: 'active',
     name: String(adminSnap.data().name || user.email),
     role: 'admin',
     uid: user.uid,

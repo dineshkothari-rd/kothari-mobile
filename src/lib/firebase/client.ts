@@ -22,9 +22,9 @@ function createAuth() {
 export const auth = createAuth();
 export const db = getFirestore(app);
 
-export function getCustomerProvisioningAuth() {
-  const provisioningApp = getApps().find(({ name }) => name === 'customer-provisioning')
-    ?? initializeApp(firebaseConfig, 'customer-provisioning');
+export function getProvisioningAuth() {
+  const provisioningApp = getApps().find(({ name }) => name === 'account-provisioning' || name === 'customer-provisioning')
+    ?? initializeApp(firebaseConfig, 'account-provisioning');
 
   try {
     return initializeAuth(provisioningApp, { persistence: inMemoryPersistence });
