@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
 import * as NavigationBar from 'expo-navigation-bar';
 import * as SystemUI from 'expo-system-ui';
-import { ActivityIndicator, AppState, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, AppState, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { firebaseConfigStatus } from '../config/firebaseConfig';
 import { SignInScreen } from '../features/auth/SignInScreen';
@@ -14,12 +14,100 @@ import { AppThemeProvider, radius, spacing, typography, useAppTheme, type AppCol
 import { LanguageProvider, useLanguage } from '../shared/i18n/LanguageProvider';
 
 export function AppShell() {
+  const [splashVisible, setSplashVisible] = useState(true);
+  const finishSplash = useCallback(() => setSplashVisible(false), []);
+
   return (
-    <AppThemeProvider>
-      <LanguageProvider>
-        <AppShellContent />
-      </LanguageProvider>
-    </AppThemeProvider>
+    <View style={splashStyles.app}>
+      <AppThemeProvider>
+        <LanguageProvider>
+          <AppShellContent />
+        </LanguageProvider>
+      </AppThemeProvider>
+      {splashVisible ? <AnimatedSplash onFinish={finishSplash} /> : null}
+    </View>
+  );
+}
+
+function AnimatedSplash({ onFinish }: { onFinish: () => void }) {
+  const entrance = useRef(new Animated.Value(0)).current;
+  const copy = useRef(new Animated.Value(0)).current;
+  const progress = useRef(new Animated.Value(0)).current;
+  const exit = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    const animation = Animated.sequence([
+      Animated.parallel([
+        Animated.spring(entrance, {
+          friction: 7,
+          tension: 65,
+          toValue: 1,
+          useNativeDriver: true,
+        }),
+        Animated.timing(copy, {
+          delay: 140,
+          duration: 420,
+          easing: Easing.out(Easing.cubic),
+          toValue: 1,
+          useNativeDriver: true,
+        }),
+        Animated.timing(progress, {
+          duration: 850,
+          easing: Easing.inOut(Easing.cubic),
+          toValue: 1,
+          useNativeDriver: true,
+        }),
+      ]),
+      Animated.delay(250),
+      Animated.timing(exit, {
+        duration: 280,
+        easing: Easing.in(Easing.cubic),
+        toValue: 0,
+        useNativeDriver: true,
+      }),
+    ]);
+
+    animation.start(({ finished }) => {
+      if (finished) onFinish();
+    });
+    return () => animation.stop();
+  }, [copy, entrance, exit, onFinish, progress]);
+
+  return (
+    <Animated.View
+      accessibilityElementsHidden
+      importantForAccessibility="no-hide-descendants"
+      style={[splashStyles.overlay, { opacity: exit }]}
+    >
+      <StatusBar style="light" />
+      <Animated.Image
+        resizeMode="contain"
+        source={require('../../assets/splash-icon.png')}
+        style={[
+          splashStyles.logo,
+          {
+            opacity: entrance,
+            transform: [
+              { scale: entrance.interpolate({ inputRange: [0, 1], outputRange: [0.72, 1] }) },
+              { rotate: entrance.interpolate({ inputRange: [0, 1], outputRange: ['-5deg', '0deg'] }) },
+            ],
+          },
+        ]}
+      />
+      <Animated.View
+        style={{
+          alignItems: 'center',
+          opacity: copy,
+          transform: [{ translateY: copy.interpolate({ inputRange: [0, 1], outputRange: [14, 0] }) }],
+        }}
+      >
+        <Text style={splashStyles.title}>KOTHARI</Text>
+        <Text style={splashStyles.subtitle}>STAYS · SPACES · SIMPLIFIED</Text>
+      </Animated.View>
+      <View style={splashStyles.track}>
+        <Animated.View style={[splashStyles.progress, { transform: [{ scaleX: progress }] }]} />
+      </View>
+    </Animated.View>
   );
 }
 
@@ -272,3 +360,48 @@ function createStyles(colors: AppColors) {
   },
   });
 }
+
+const splashStyles = StyleSheet.create({
+  app: {
+    flex: 1,
+  },
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: 'center',
+    backgroundColor: '#0F172A',
+    justifyContent: 'center',
+    zIndex: 100,
+  },
+  logo: {
+    height: 220,
+    width: 220,
+  },
+  title: {
+    color: '#F8FAFC',
+    fontSize: 28,
+    fontWeight: typography.weight.black,
+    letterSpacing: 5,
+    marginTop: -12,
+  },
+  subtitle: {
+    color: '#5EEAD4',
+    fontSize: 10,
+    fontWeight: typography.weight.bold,
+    letterSpacing: 2,
+    marginTop: spacing.sm,
+  },
+  track: {
+    backgroundColor: 'rgba(255,255,255,0.12)',
+    borderRadius: 3,
+    height: 3,
+    marginTop: 36,
+    overflow: 'hidden',
+    width: 120,
+  },
+  progress: {
+    backgroundColor: '#2DD4BF',
+    borderRadius: 3,
+    height: 3,
+    width: 120,
+  },
+});
