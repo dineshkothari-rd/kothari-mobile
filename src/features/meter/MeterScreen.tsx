@@ -12,7 +12,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { collection, doc, getDocs, limit, orderBy, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
+import { collection, doc, getDocs, limit, orderBy, query, runTransaction, serverTimestamp, where, writeBatch } from 'firebase/firestore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
@@ -26,6 +26,7 @@ import { FilterPill } from '../customers/FilterPill';
 import { getCustomerAllocationLabel, getCustomerStatus } from '../customers/customerUtils';
 import { isRoomCustomer } from '../customers/roomUtils';
 import { LifecycleMeterSheet, type LifecycleMeterResult } from '../customers/LifecycleMeterSheet';
+import { syncAllocationGuard } from '../customers/allocationTransactions';
 import { getMonthKey } from '../operations/operationsMath';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
@@ -202,28 +203,8 @@ export function MeterScreen() {
       if (!actorUid) throw new Error(t('Please sign in again.'));
       const eventTime = new Date();
       const readingRef = doc(collection(db, 'meterReadings'));
-      const batch = writeBatch(db);
       const unitsConsumed = checkingIn ? 0 : Math.max(0, result.reading - minimumReading);
-
-      batch.set(readingRef, {
-        billAmount: unitsConsumed * RATE_PER_UNIT,
-        createdAt: serverTimestamp(),
-        currentReading: result.reading,
-        month: `${eventTime.getFullYear()}-${String(eventTime.getMonth() + 1).padStart(2, '0')}`,
-        note: checkingIn ? 'Check-in meter photo' : 'Check-out meter photo',
-        ocrText: result.ocrText,
-        photo: result.photo,
-        photoSize: result.photoSize,
-        previousReading: minimumReading,
-        ratePerUnit: RATE_PER_UNIT,
-        readingSource: 'ocr-locked',
-        readingType: action,
-        tenantId: customer.id,
-        tenantName: getTenantName(customer),
-        tenantRoom: customer.room || '',
-        unitsConsumed,
-      });
-      batch.update(doc(db, 'tenants', customer.id), checkingIn ? {
+      const tenantUpdate = checkingIn ? {
         checkedInAt: serverTimestamp(),
         checkInMeterReading: result.reading,
         checkInMeterReadingId: readingRef.id,
@@ -239,16 +220,37 @@ export function MeterScreen() {
         moveOutTime: eventTime.toTimeString().slice(0, 5),
         status: 'checked out',
         updatedAt: serverTimestamp(),
+      };
+      const nextCustomer = { ...customer, ...tenantUpdate, status: checkingIn ? 'checked in' : 'checked out' } as TenantRecord;
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customer.id, customer, nextCustomer, tenants.data);
+        transaction.set(readingRef, {
+          billAmount: unitsConsumed * RATE_PER_UNIT,
+          createdAt: serverTimestamp(),
+          currentReading: result.reading,
+          month: `${eventTime.getFullYear()}-${String(eventTime.getMonth() + 1).padStart(2, '0')}`,
+          note: checkingIn ? 'Check-in meter photo' : 'Check-out meter photo',
+          ocrText: result.ocrText,
+          photo: result.photo,
+          photoSize: result.photoSize,
+          previousReading: minimumReading,
+          ratePerUnit: RATE_PER_UNIT,
+          readingSource: 'ocr-locked',
+          readingType: action,
+          tenantId: customer.id,
+          tenantName: getTenantName(customer),
+          tenantRoom: customer.room || '',
+          unitsConsumed,
+        });
+        transaction.update(doc(db, 'tenants', customer.id), tenantUpdate);
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
+          actorUid,
+          createdAt: serverTimestamp(),
+          customerId: customer.id,
+          customerName: getTenantName(customer),
+        });
       });
-      batch.set(doc(collection(db, 'auditEvents')), {
-        action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
-        actorUid,
-        createdAt: serverTimestamp(),
-        customerId: customer.id,
-        customerName: getTenantName(customer),
-      });
-
-      await batch.commit();
       setPendingLifecycle(null);
     } catch (lifecycleError) {
       setActionError(lifecycleError instanceof Error ? lifecycleError.message : t('Could not save meter lifecycle.'));

@@ -17,7 +17,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as Crypto from 'expo-crypto';
 import { createUserWithEmailAndPassword, deleteUser, sendPasswordResetEmail, signOut, type User } from 'firebase/auth';
-import { addDoc, collection, doc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import { collection, doc, runTransaction, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
@@ -34,8 +34,9 @@ import { CustomerCard } from './CustomerCard';
 import { customerStatusOptions, getCustomerName, getCustomerStatus, getCustomerStatusGroup, matchesCustomerSearch } from './customerUtils';
 import { FilterPill } from './FilterPill';
 import { LifecycleMeterSheet, type LifecycleMeterResult } from './LifecycleMeterSheet';
-import { getRoomOccupancy, getRoomSummary, parseRoomLabel, roomNumbers, staysOverlap } from './roomUtils';
+import { getAllocationKey, getRoomOccupancy, getRoomSummary, normalizeLibrarySeat, parseRoomLabel, roomNumbers, staysOverlap } from './roomUtils';
 import { getDayKey, matchesDailyStayAction } from '../operations/operationsMath';
+import { syncAllocationGuard } from './allocationTransactions';
 
 type CustomerDraft = {
   additionalGuests: string[];
@@ -256,29 +257,35 @@ export function CustomersScreen({
             }
           : {};
 
-      if (editingCustomer) {
-        await updateDoc(doc(db, 'tenants', editingCustomer.id), {
-          ...savedPayload,
-          ...lifecycleFields,
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        const customerRef = await addDoc(collection(db, 'tenants'), {
-          ...savedPayload,
-          ...lifecycleFields,
-          createdAt: serverTimestamp(),
-          idProof: savedPayload.idProof || null,
-          idProofName: savedPayload.idProofName || null,
-          idProofSize: savedPayload.idProofSize || 0,
-          idProofType: savedPayload.idProofType || null,
-          idProofBack: savedPayload.idProofBack || null,
-          idProofBackName: savedPayload.idProofBackName || null,
-          idProofBackSize: savedPayload.idProofBackSize || 0,
-          customerPhoto: savedPayload.customerPhoto || null,
-          customerPhotoName: savedPayload.customerPhotoName || null,
-          customerPhotoSize: savedPayload.customerPhotoSize || 0,
-        });
+      const customerRef = editingCustomer
+        ? doc(db, 'tenants', editingCustomer.id)
+        : doc(collection(db, 'tenants'));
+      const nextCustomer = { id: customerRef.id, ...editingCustomer, ...savedPayload, ...lifecycleFields } as TenantRecord;
 
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customerRef.id, editingCustomer || undefined, nextCustomer, tenants.data);
+        if (editingCustomer) {
+          transaction.update(customerRef, { ...savedPayload, ...lifecycleFields, updatedAt: serverTimestamp() });
+        } else {
+          transaction.set(customerRef, {
+            ...savedPayload,
+            ...lifecycleFields,
+            createdAt: serverTimestamp(),
+            idProof: savedPayload.idProof || null,
+            idProofName: savedPayload.idProofName || null,
+            idProofSize: savedPayload.idProofSize || 0,
+            idProofType: savedPayload.idProofType || null,
+            idProofBack: savedPayload.idProofBack || null,
+            idProofBackName: savedPayload.idProofBackName || null,
+            idProofBackSize: savedPayload.idProofBackSize || 0,
+            customerPhoto: savedPayload.customerPhoto || null,
+            customerPhotoName: savedPayload.customerPhotoName || null,
+            customerPhotoSize: savedPayload.customerPhotoSize || 0,
+          });
+        }
+      });
+
+      if (!editingCustomer) {
         if (requiresInitialMeter) {
           setPendingMeterLifecycle({
             action: 'check-in',
@@ -299,7 +306,7 @@ export function CustomersScreen({
     }
   }
 
-  async function deleteCustomer(customer: TenantRecord) {
+  async function archiveCustomer(customer: TenantRecord) {
     const actorUid = auth.currentUser?.uid;
     if (!actorUid) {
       setActionError(t('Please sign in again.'));
@@ -310,34 +317,47 @@ export function CustomersScreen({
     setActionError('');
 
     try {
-      const batch = writeBatch(db);
-      if (customer.userId) {
-        batch.update(doc(db, 'users', customer.userId), {
-          accessStatus: 'revoked',
-          revokedAt: serverTimestamp(),
+      const archivedStatus = getCustomerStatus(customer) === 'booked' ? 'cancelled' : 'inactive';
+      const archiveDate = getLocalDate(new Date());
+      const archivedCustomer = { ...customer, accessStatus: customer.userId ? 'revoked' : customer.accessStatus, archived: true, moveOutDate: customer.moveOutDate || archiveDate, status: archivedStatus } as TenantRecord;
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customer.id, customer, archivedCustomer, tenants.data);
+        if (customer.userId) {
+          transaction.update(doc(db, 'users', customer.userId), {
+            accessStatus: 'revoked',
+            revokedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+        transaction.update(doc(db, 'tenants', customer.id), {
+          accessStatus: customer.userId ? 'revoked' : customer.accessStatus || 'active',
+          archived: true,
+          archivedAt: serverTimestamp(),
+          archivedBy: actorUid,
+          checkedOutAt: serverTimestamp(),
+          moveOutDate: customer.moveOutDate || archiveDate,
+          status: archivedStatus,
           updatedAt: serverTimestamp(),
         });
-      }
-      batch.delete(doc(db, 'tenants', customer.id));
-      batch.set(doc(collection(db, 'auditEvents')), {
-        action: 'customer.deleted',
-        actorUid,
-        createdAt: serverTimestamp(),
-        customerId: customer.id,
-        customerName: getCustomerName(customer),
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: 'customer.archived',
+          actorUid,
+          createdAt: serverTimestamp(),
+          customerId: customer.id,
+          customerName: getCustomerName(customer),
+        });
       });
-      await batch.commit();
     } catch (deleteError) {
-      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete customer.'));
+      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not archive customer.'));
     } finally {
       setDeletingId('');
     }
   }
 
-  function confirmDelete(customer: TenantRecord) {
-    Alert.alert(t('Delete customer?'), `${t('Delete')} ${customer.name || t('this customer')}? ${t('This cannot be undone.')}`, [
+  function confirmArchive(customer: TenantRecord) {
+    Alert.alert(t('Archive customer?'), `${customer.name || t('This customer')} · ${t('Their history and financial records will be kept.')}`, [
       { text: t('Cancel'), style: 'cancel' },
-      { text: t('Delete'), style: 'destructive', onPress: () => deleteCustomer(customer) },
+      { text: t('Archive'), style: 'destructive', onPress: () => archiveCustomer(customer) },
     ]);
   }
 
@@ -490,29 +510,8 @@ export function CustomersScreen({
     try {
       const eventTime = new Date();
       const readingRef = doc(collection(db, 'meterReadings'));
-      const batch = writeBatch(db);
       const unitsConsumed = checkingIn ? 0 : Math.max(0, result.reading - minimumReading);
-
-      batch.set(readingRef, {
-        billAmount: unitsConsumed * 10,
-        createdAt: serverTimestamp(),
-        currentReading: result.reading,
-        month: `${eventTime.getFullYear()}-${String(eventTime.getMonth() + 1).padStart(2, '0')}`,
-        note: checkingIn ? 'Check-in meter photo' : 'Check-out meter photo',
-        ocrText: result.ocrText,
-        photo: result.photo,
-        photoSize: result.photoSize,
-        previousReading: minimumReading,
-        ratePerUnit: 10,
-        readingSource: 'ocr-locked',
-        readingType: action,
-        tenantId: customer.id,
-        tenantName: customer.name || customer.fullName || customer.tenantName || 'Unnamed customer',
-        tenantRoom: customer.room || '',
-        unitsConsumed,
-      });
-
-      batch.update(doc(db, 'tenants', customer.id), checkingIn ? {
+      const tenantUpdate = checkingIn ? {
         checkedInAt: serverTimestamp(),
         checkInMeterReading: result.reading,
         checkInMeterReadingId: readingRef.id,
@@ -528,16 +527,38 @@ export function CustomersScreen({
         moveOutTime: eventTime.toTimeString().slice(0, 5),
         status: 'checked out',
         updatedAt: serverTimestamp(),
-      });
-      batch.set(doc(collection(db, 'auditEvents')), {
-        action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
-        actorUid,
-        createdAt: serverTimestamp(),
-        customerId: customer.id,
-        customerName: customer.name || customer.fullName || customer.tenantName || '',
-      });
+      };
+      const nextCustomer = { ...customer, ...tenantUpdate, status: checkingIn ? 'checked in' : 'checked out' } as TenantRecord;
 
-      await batch.commit();
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customer.id, customer, nextCustomer, tenants.data);
+        transaction.set(readingRef, {
+          billAmount: unitsConsumed * 10,
+          createdAt: serverTimestamp(),
+          currentReading: result.reading,
+          month: `${eventTime.getFullYear()}-${String(eventTime.getMonth() + 1).padStart(2, '0')}`,
+          note: checkingIn ? 'Check-in meter photo' : 'Check-out meter photo',
+          ocrText: result.ocrText,
+          photo: result.photo,
+          photoSize: result.photoSize,
+          previousReading: minimumReading,
+          ratePerUnit: 10,
+          readingSource: 'ocr-locked',
+          readingType: action,
+          tenantId: customer.id,
+          tenantName: customer.name || customer.fullName || customer.tenantName || 'Unnamed customer',
+          tenantRoom: customer.room || '',
+          unitsConsumed,
+        });
+        transaction.update(doc(db, 'tenants', customer.id), tenantUpdate);
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
+          actorUid,
+          createdAt: serverTimestamp(),
+          customerId: customer.id,
+          customerName: customer.name || customer.fullName || customer.tenantName || '',
+        });
+      });
       setPendingMeterLifecycle(null);
     } catch (lifecycleError) {
       setActionError(lifecycleError instanceof Error ? lifecycleError.message : t('Could not save meter lifecycle.'));
@@ -561,8 +582,7 @@ export function CustomersScreen({
 
     try {
       const eventTime = new Date();
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'tenants', customer.id), checkingIn ? {
+      const tenantUpdate = checkingIn ? {
         checkedInAt: serverTimestamp(),
         moveInDate: getLocalDate(eventTime),
         moveInTime: eventTime.toTimeString().slice(0, 5),
@@ -574,15 +594,19 @@ export function CustomersScreen({
         moveOutTime: eventTime.toTimeString().slice(0, 5),
         status: 'checked out',
         updatedAt: serverTimestamp(),
+      };
+      const nextCustomer = { ...customer, ...tenantUpdate, status: checkingIn ? 'checked in' : 'checked out' } as TenantRecord;
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customer.id, customer, nextCustomer, tenants.data);
+        transaction.update(doc(db, 'tenants', customer.id), tenantUpdate);
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
+          actorUid,
+          createdAt: serverTimestamp(),
+          customerId: customer.id,
+          customerName: customer.name || customer.fullName || customer.tenantName || '',
+        });
       });
-      batch.set(doc(collection(db, 'auditEvents')), {
-        action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
-        actorUid,
-        createdAt: serverTimestamp(),
-        customerId: customer.id,
-        customerName: customer.name || customer.fullName || customer.tenantName || '',
-      });
-      await batch.commit();
     } catch (lifecycleError) {
       setActionError(lifecycleError instanceof Error ? lifecycleError.message : t('Could not update customer lifecycle.'));
     } finally {
@@ -625,29 +649,31 @@ export function CustomersScreen({
     setActionError('');
 
     try {
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'tenants', customer.id), {
+      const tenantUpdate = {
         ...(customer.userId ? { accessStatus: 'revoked', revokedAt: serverTimestamp() } : {}),
         cancelledAt: serverTimestamp(),
         cancelledBy: actorUid,
         status: 'cancelled',
         updatedAt: serverTimestamp(),
-      });
-      if (customer.userId) {
-        batch.update(doc(db, 'users', customer.userId), {
-          accessStatus: 'revoked',
-          revokedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+      };
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customer.id, customer, { ...customer, ...tenantUpdate, status: 'cancelled' } as TenantRecord, tenants.data);
+        transaction.update(doc(db, 'tenants', customer.id), tenantUpdate);
+        if (customer.userId) {
+          transaction.update(doc(db, 'users', customer.userId), {
+            accessStatus: 'revoked',
+            revokedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: 'customer.reservation_cancelled',
+          actorUid,
+          createdAt: serverTimestamp(),
+          customerId: customer.id,
+          customerName: customer.name || customer.fullName || customer.tenantName || '',
         });
-      }
-      batch.set(doc(collection(db, 'auditEvents')), {
-        action: 'customer.reservation_cancelled',
-        actorUid,
-        createdAt: serverTimestamp(),
-        customerId: customer.id,
-        customerName: customer.name || customer.fullName || customer.tenantName || '',
       });
-      await batch.commit();
     } catch (cancelError) {
       setActionError(cancelError instanceof Error ? cancelError.message : t('Could not cancel reservation.'));
     } finally {
@@ -840,7 +866,7 @@ export function CustomersScreen({
               expanded={selectedCustomerId === tenant.id}
               inviting={invitingId === tenant.id}
               key={tenant.id}
-              onDelete={isAdmin ? () => confirmDelete(tenant) : undefined}
+              onDelete={isAdmin ? () => confirmArchive(tenant) : undefined}
               onCancel={() => confirmCancelReservation(tenant)}
               onAccessChange={isAdmin && tenant.userId && tenant.accessStatus !== 'revoked' ? () => changeCustomerAccess(tenant) : undefined}
               onEdit={() => openEditForm(tenant)}
@@ -894,27 +920,6 @@ const customerFormSteps: Array<{ id: CustomerFormStep; label: string }> = [
   { id: 'allocation', label: 'Allocation' },
   { id: 'details', label: 'Details' },
 ];
-
-function normalizeLibrarySeat(value: unknown) {
-  const text = String(value || '').trim().toUpperCase().replace(/\s+/g, '');
-  const rawSeat = text.replace(/^SEAT/, '');
-  const match = rawSeat.match(/^([A-Z])0*(\d{1,3})$/);
-
-  if (!match) return rawSeat;
-
-  return `${match[1]}${match[2].padStart(2, '0')}`;
-}
-
-function getAllocationKey(value: unknown, businessType: string) {
-  const text = String(value || '').trim();
-
-  if (businessType === 'library') {
-    const seatMatch = text.match(/Seat\s+([A-Z]\d{1,2})/i) || text.match(/^([A-Z]\d{1,2})$/i);
-    return normalizeLibrarySeat(seatMatch?.[1] || text);
-  }
-
-  return parseRoomLabel(text).room;
-}
 
 function CustomerFormSheet({
   customer,

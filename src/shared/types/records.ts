@@ -4,6 +4,12 @@ export type FirestoreRecord = {
 };
 
 export type TenantRecord = FirestoreRecord & {
+  archived?: boolean;
+  archivedAt?: {
+    seconds?: number;
+    toDate?: () => Date;
+  };
+  archivedBy?: string;
   additionalGuests?: string[];
   businessType?: string;
   documentId?: string;

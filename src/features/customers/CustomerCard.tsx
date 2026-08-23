@@ -164,7 +164,7 @@ export function CustomerCard({ accessActionLabel, accessChanging = false, custom
           ) : null}
           {onDelete ? (
             <Pressable accessibilityRole="button" disabled={deleting} onPress={onDelete} style={[styles.deleteAction, deleting && styles.disabledAction]}>
-              <Text style={styles.deleteActionText}>{t(deleting ? 'Deleting...' : 'Delete customer')}</Text>
+              <Text style={styles.deleteActionText}>{t(deleting ? 'Archiving...' : 'Archive customer')}</Text>
             </Pressable>
           ) : null}
         </View>

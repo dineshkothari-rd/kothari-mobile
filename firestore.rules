@@ -149,7 +149,15 @@ service cloud.firestore {
       allow update: if admin()
         || staffUpdatingTenantAccess()
         || customerActivatingTenant(tenantId);
-      allow delete: if admin();
+      allow delete: if false;
+    }
+
+    match /allocationGuards/{guardId} {
+      allow read: if staff();
+      allow create, update: if staff()
+        && request.resource.data.inventoryType in ['room', 'seat']
+        && request.resource.data.reservations is list;
+      allow delete: if staff();
     }
 
     match /payments/{paymentId} {

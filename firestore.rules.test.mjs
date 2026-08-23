@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import test, { after } from 'node:test';
 
 import { assertFails, assertSucceeds, initializeTestEnvironment } from '@firebase/rules-unit-testing';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { deleteDoc, doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 
 const projectId = 'demo-no-project';
 const testEnv = await initializeTestEnvironment({
@@ -68,6 +68,9 @@ test('staff can operate but cannot escalate roles or bypass lifecycle', async ()
   await assertSucceeds(updateDoc(doc(db, 'tenants', 'tenant-1'), { status: 'checked out' }));
   await assertFails(updateDoc(doc(db, 'tenants', 'tenant-1'), { status: 'booked' }));
   await assertFails(updateDoc(doc(db, 'users', 'staff-1'), { role: 'admin' }));
+  await assertSucceeds(setDoc(doc(db, 'allocationGuards', 'room-101'), {
+    inventoryType: 'room', reservations: [{ businessType: 'pg', customerId: 'tenant-1', status: 'checked in' }],
+  }));
 
   const suspendedDb = signedIn('staff-2', 'staff');
   await assertFails(getDoc(doc(suspendedDb, 'tenants', 'tenant-1')));
@@ -77,7 +80,16 @@ test('admin manages access while unverified users are denied', async () => {
   await seed();
   const adminDb = signedIn('admin-1', 'admin');
   await assertSucceeds(updateDoc(doc(adminDb, 'users', 'staff-1'), { accessStatus: 'suspended' }));
+  await assertFails(deleteDoc(doc(adminDb, 'tenants', 'tenant-1')));
 
   const unverified = testEnv.authenticatedContext('staff-1', { email: 'staff@example.com', email_verified: false, role: 'staff' }).firestore();
   await assertFails(getDoc(doc(unverified, 'tenants', 'tenant-1')));
+});
+
+test('customers cannot read or change allocation guards', async () => {
+  await seed();
+  const db = signedIn('customer-1', 'customer', { customerId: 'tenant-1' });
+
+  await assertFails(getDoc(doc(db, 'allocationGuards', 'room-101')));
+  await assertFails(setDoc(doc(db, 'allocationGuards', 'room-101'), { inventoryType: 'room', reservations: [] }));
 });

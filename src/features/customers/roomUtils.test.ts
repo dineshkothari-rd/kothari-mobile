@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 // @ts-expect-error Node runs this check with native TypeScript stripping.
-import { getRoomSummary, staysOverlap } from './roomUtils.ts';
+import { canAllocateCustomer, getRoomSummary, staysOverlap } from './roomUtils.ts';
 
 test('future reservations hold inventory without counting as occupied rooms', () => {
   const customers = [
@@ -21,4 +21,17 @@ test('back-to-back reservations share a room but overlapping stays do not', () =
 
   assert.equal(staysOverlap(first, next), false);
   assert.equal(staysOverlap(first, overlap), true);
+});
+
+test('allocation capacity blocks concurrent hotel, PG, and library conflicts', () => {
+  const stay = { id: 'candidate', businessType: 'pg', moveInDate: '2026-09-10', room: 'Room 101', status: 'booked' };
+  const firstPg = { ...stay, id: 'first' };
+  const secondPg = { ...stay, id: 'second' };
+  const hotel = { ...stay, businessType: 'hotel', id: 'hotel' };
+  const member = { ...stay, businessType: 'library', id: 'member', room: 'Seat A01' };
+
+  assert.equal(canAllocateCustomer(stay, [firstPg]), true);
+  assert.equal(canAllocateCustomer(stay, [firstPg, secondPg]), false);
+  assert.equal(canAllocateCustomer(stay, [hotel]), false);
+  assert.equal(canAllocateCustomer(member, [{ ...member, id: 'existing' }]), false);
 });

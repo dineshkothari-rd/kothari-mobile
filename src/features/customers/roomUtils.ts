@@ -7,6 +7,25 @@ export const ROOM_COUNT = 11;
 export const roomNumbers = Array.from({ length: ROOM_COUNT }, (_, index) => String(ROOM_START + index));
 export const bedLabels = ['Bed A', 'Bed B'] as const;
 
+export function normalizeLibrarySeat(value: unknown) {
+  const text = String(value || '').trim().toUpperCase().replace(/\s+/g, '');
+  const rawSeat = text.replace(/^SEAT\s*/, '');
+  const match = rawSeat.match(/^([A-Z])0*(\d{1,3})$/);
+
+  return match ? `${match[1]}${match[2].padStart(2, '0')}` : rawSeat;
+}
+
+export function getAllocationKey(value: unknown, businessType: unknown) {
+  const text = String(value || '').trim();
+
+  if (businessType === 'library') {
+    const seatMatch = text.match(/Seat\s+([A-Z]\d{1,3})/i) || text.match(/^([A-Z]\d{1,3})$/i);
+    return normalizeLibrarySeat(seatMatch?.[1] || text);
+  }
+
+  return parseRoomLabel(text).room;
+}
+
 function getTimestampDate(value: unknown) {
   if (value instanceof Date) return value;
 
@@ -77,6 +96,14 @@ export function staysOverlap(first: TenantRecord, second: TenantRecord) {
 
   return (firstStart?.getTime() ?? Number.NEGATIVE_INFINITY) < (secondEnd?.getTime() ?? Number.POSITIVE_INFINITY)
     && (secondStart?.getTime() ?? Number.NEGATIVE_INFINITY) < (firstEnd?.getTime() ?? Number.POSITIVE_INFINITY);
+}
+
+export function canAllocateCustomer(candidate: TenantRecord, existing: TenantRecord[]) {
+  const conflicts = existing.filter((customer) => staysOverlap(customer, candidate));
+  const businessType = String(candidate.businessType || 'pg');
+
+  if (businessType === 'library' || businessType === 'hotel') return conflicts.length === 0;
+  return !conflicts.some((customer) => customer.businessType === 'hotel') && conflicts.length < 2;
 }
 
 export function parseRoomLabel(value: unknown) {
