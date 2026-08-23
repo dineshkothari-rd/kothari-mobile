@@ -62,7 +62,7 @@ function getExpenseTotal(expenses: ExpenseRecord[]) {
 export function ExpenseDesk({ month }: { month: string }) {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
-  const styles = createStyles(colors);
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [showForm, setShowForm] = useState(false);

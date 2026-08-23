@@ -83,7 +83,7 @@ function formatLocalDate(date: Date) {
 export function MeterScreen() {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
-  const styles = createStyles(colors);
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [search, setSearch] = useState('');
   const [tenantFilter, setTenantFilter] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -104,8 +104,8 @@ export function MeterScreen() {
       }),
     [readings.data, search, tenantFilter],
   );
-  const totalUnits = getUnitsTotal(filtered);
-  const totalBill = getBillTotal(filtered);
+  const totalUnits = useMemo(() => getUnitsTotal(filtered), [filtered]);
+  const totalBill = useMemo(() => getBillTotal(filtered), [filtered]);
   const loading = tenants.loading || readings.loading;
   const error = tenants.error || readings.error;
   const lifecycleCustomers = useMemo(

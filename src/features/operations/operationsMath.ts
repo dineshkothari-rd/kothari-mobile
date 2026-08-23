@@ -1,5 +1,6 @@
 import type { DueRecord, ExpenseRecord, MeterReadingRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
 import { toNumber } from '../../shared/utils/money';
+import { getCustomerStatusGroup } from '../customers/customerUtils';
 
 const activeStatuses = new Set(['active', 'checked in', 'occupied']);
 const completedStatuses = new Set(['checked out', 'inactive']);
@@ -67,6 +68,41 @@ export function matchesMonth(record: Record<string, unknown>, month: string, fie
   if (typeof record.month === 'string') return record.month === month;
 
   return readDateValue(record, fields).slice(0, 7) === month;
+}
+
+export function matchesDailyStayAction(tenant: TenantRecord, action: string, day = getDayKey()) {
+  const status = getCustomerStatusGroup(tenant);
+
+  if (action === 'arrival') {
+    const startDate = readDateValue(tenant, ['moveInDate', 'checkInDate']).slice(0, 10);
+    return status === 'reserved' && Boolean(startDate) && startDate <= day;
+  }
+
+  if (action === 'departure') {
+    const endDate = readDateValue(tenant, ['moveOutDate', 'checkOutDate', 'checkoutDate', 'endDate']).slice(0, 10);
+    return status === 'active' && Boolean(endDate) && endDate <= day;
+  }
+
+  return true;
+}
+
+export function getDailyStayActions(tenants: TenantRecord[] = [], day = getDayKey()) {
+  return tenants.reduce(
+    (actions, tenant) => {
+      const status = getCustomerStatusGroup(tenant);
+      const startDate = readDateValue(tenant, ['moveInDate', 'checkInDate']).slice(0, 10);
+
+      if (matchesDailyStayAction(tenant, 'arrival', day)) actions.arrivals += 1;
+      if (matchesDailyStayAction(tenant, 'departure', day)) actions.departures += 1;
+      if (
+        (status === 'reserved' || status === 'active')
+        && (!startDate || !tenant.room || !tenant.phone || !tenant.documentId || !tenant.idProof)
+      ) actions.incompleteProfiles += 1;
+
+      return actions;
+    },
+    { arrivals: 0, departures: 0, incompleteProfiles: 0 },
+  );
 }
 
 export function getTenantName(tenant: TenantRecord) {

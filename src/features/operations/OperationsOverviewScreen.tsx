@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
@@ -14,6 +14,8 @@ import {
   calculateMonthlyDues,
   getCollectedTotal,
   getExpenseTotal,
+  getDailyStayActions,
+  getDayKey,
   getMonthDisplay,
   getMonthKey,
   matchesMonth,
@@ -26,12 +28,12 @@ const paymentDateFields = ['paidOn', 'date', 'createdAt', 'updatedAt'];
 const expenseDateFields = ['date', 'expenseDate', 'createdAt', 'updatedAt'];
 const activityDateFields = ['createdAt', 'updatedAt', 'date'];
 
-export type OverviewDestination = 'customers' | 'money' | 'enquiries' | 'meter';
+export type OverviewDestination = 'arrivals' | 'attention' | 'customers' | 'departures' | 'money' | 'enquiries' | 'meter';
 
 export function OperationsOverviewScreen({ onNavigate }: { onNavigate: (destination: OverviewDestination) => void }) {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
-  const styles = createStyles(colors);
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [month, setMonth] = useState(getMonthKey());
   const now = useRealtimeClock();
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
@@ -39,38 +41,46 @@ export function OperationsOverviewScreen({ onNavigate }: { onNavigate: (destinat
   const expenses = useFirestoreCollection<ExpenseRecord>('expenses', { sortBy: 'createdAt' });
   const enquiries = useFirestoreCollection<EnquiryRecord>('enquiries', { sortBy: 'createdAt' });
   const meterReadings = useFirestoreCollection<MeterReadingRecord>('meterReadings', { sortBy: 'createdAt' });
-  const currentMonth = getMonthKey();
-  const monthlyPayments = payments.data.filter((payment) => matchesMonth(payment, month, paymentDateFields));
-  const monthlyExpenses = expenses.data.filter((expense) => matchesMonth(expense, month, expenseDateFields));
-  const monthlyEnquiries = enquiries.data.filter((enquiry) => matchesMonth(enquiry, month, activityDateFields));
-  const monthlyReadings = meterReadings.data.filter((reading) => matchesMonth(reading, month, activityDateFields));
-  const dues = calculateMonthlyDues(tenants.data, payments.data, month, meterReadings.data);
-  const duesSummary = summarizeDues(dues);
-  const collected = getCollectedTotal(monthlyPayments);
-  const expenseTotal = getExpenseTotal(monthlyExpenses);
-  const net = collected - expenseTotal;
-  const activeCustomers = tenants.data.filter((customer) => getCustomerStatusGroup(customer) === 'active');
-  const reservedCustomers = tenants.data.filter((customer) => getCustomerStatusGroup(customer) === 'reserved');
-  const newEnquiries = monthlyEnquiries.filter((enquiry) => String(enquiry.status || 'New').toLowerCase() === 'new');
-  const roomSummary = getRoomSummary(tenants.data, now);
-  const readPgRooms = new Set(monthlyReadings.map((reading) => parseRoomLabel(reading.tenantRoom).room).filter(Boolean));
-  const activePgRooms = new Set(
-    activeCustomers
-      .filter((customer) => String(customer.businessType || 'pg') === 'pg')
-      .map((customer) => parseRoomLabel(customer.room).room)
-      .filter(Boolean),
-  );
-  const roomsMissingReading = [...activePgRooms].filter((room) => !readPgRooms.has(room)).length;
   const loading = tenants.loading || payments.loading || expenses.loading || enquiries.loading || meterReadings.loading;
   const error = tenants.error || payments.error || expenses.error || enquiries.error || meterReadings.error;
-  const businessSnapshots = businessTypeOptions.map((business) => {
-    const customers = tenants.data.filter((customer) => String(customer.businessType || 'pg') === business.id);
-    const active = customers.filter((customer) => getCustomerStatusGroup(customer) === 'active');
-    const allocations = new Set(active.map((customer) => String(customer.room || '').trim()).filter(Boolean));
-    const businessDues = summarizeDues(dues.filter((due) => due.businessType === business.id));
+  const currentMonth = getMonthKey();
+  const today = getDayKey(new Date(now));
+  const roomSummary = useMemo(() => getRoomSummary(tenants.data, now), [now, tenants.data]);
+  const snapshot = useMemo(() => {
+    const monthlyPayments = payments.data.filter((payment) => matchesMonth(payment, month, paymentDateFields));
+    const monthlyExpenses = expenses.data.filter((expense) => matchesMonth(expense, month, expenseDateFields));
+    const monthlyEnquiries = enquiries.data.filter((enquiry) => matchesMonth(enquiry, month, activityDateFields));
+    const monthlyReadings = meterReadings.data.filter((reading) => matchesMonth(reading, month, activityDateFields));
+    const dues = calculateMonthlyDues(tenants.data, payments.data, month, meterReadings.data);
+    const activeCustomers = tenants.data.filter((customer) => getCustomerStatusGroup(customer) === 'active');
+    const readPgRooms = new Set(monthlyReadings.map((reading) => parseRoomLabel(reading.tenantRoom).room).filter(Boolean));
+    const activePgRooms = new Set(
+      activeCustomers
+        .filter((customer) => String(customer.businessType || 'pg') === 'pg')
+        .map((customer) => parseRoomLabel(customer.room).room)
+        .filter(Boolean),
+    );
+    const collected = getCollectedTotal(monthlyPayments);
+    const expenseTotal = getExpenseTotal(monthlyExpenses);
 
-    return { active: active.length, allocations: allocations.size, due: businessDues.balance, ...business };
-  });
+    return {
+      activeCustomers,
+      businessSnapshots: businessTypeOptions.map((business) => {
+        const active = activeCustomers.filter((customer) => String(customer.businessType || 'pg') === business.id);
+        const allocations = new Set(active.map((customer) => String(customer.room || '').trim()).filter(Boolean));
+        const businessDues = summarizeDues(dues.filter((due) => due.businessType === business.id));
+        return { active: active.length, allocations: allocations.size, due: businessDues.balance, ...business };
+      }),
+      collected,
+      dailyActions: getDailyStayActions(tenants.data, today),
+      duesSummary: summarizeDues(dues),
+      expenseTotal,
+      net: collected - expenseTotal,
+      newEnquiries: monthlyEnquiries.filter((enquiry) => String(enquiry.status || 'New').toLowerCase() === 'new'),
+      roomsMissingReading: [...activePgRooms].filter((room) => !readPgRooms.has(room)).length,
+    };
+  }, [enquiries.data, expenses.data, meterReadings.data, month, payments.data, tenants.data, today]);
+  const { activeCustomers, businessSnapshots, collected, dailyActions, duesSummary, expenseTotal, net, newEnquiries, roomsMissingReading } = snapshot;
 
   return (
     <View>
@@ -129,11 +139,13 @@ export function OperationsOverviewScreen({ onNavigate }: { onNavigate: (destinat
       </View>
 
       <View style={styles.attentionPanel}>
-        <Text style={styles.panelTitle}>{t('Needs attention')}</Text>
+        <Text style={styles.panelTitle}>{t("Today's work")}</Text>
+        <FocusRow accent={colors.success} label={t('Arrivals ready')} onPress={() => onNavigate('arrivals')} styles={styles} value={`${dailyActions.arrivals} ${t('customers')}`} />
+        <FocusRow accent={colors.copper} label={t('Check-outs due')} onPress={() => onNavigate('departures')} styles={styles} value={`${dailyActions.departures} ${t('customers')}`} />
+        <FocusRow accent={colors.accent} label={t('Profiles to complete')} onPress={() => onNavigate('attention')} styles={styles} value={`${dailyActions.incompleteProfiles} ${t('customers')}`} />
         <FocusRow accent={colors.danger} label={t('Outstanding dues')} onPress={() => onNavigate('money')} styles={styles} value={`${duesSummary.pendingCount + duesSummary.partialCount} ${t('customers')}`} />
-        <FocusRow accent={colors.copper} label={t('Reservations')} onPress={() => onNavigate('customers')} styles={styles} value={`${reservedCustomers.length} ${t('customers')}`} />
-        <FocusRow accent={colors.accent} label={t('New enquiries')} onPress={() => onNavigate('enquiries')} styles={styles} value={`${newEnquiries.length} ${t('leads')}`} />
         <FocusRow accent={colors.warning} label={t('Meter readings')} onPress={() => onNavigate('meter')} styles={styles} value={`${roomsMissingReading} ${t('rooms')}`} />
+        <FocusRow accent={colors.sky} label={t('New enquiries')} onPress={() => onNavigate('enquiries')} styles={styles} value={`${newEnquiries.length} ${t('leads')}`} />
       </View>
     </View>
   );

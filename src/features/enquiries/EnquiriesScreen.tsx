@@ -77,7 +77,7 @@ function openLink(url: string) {
 export function EnquiriesScreen() {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
-  const styles = createStyles(colors);
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [busyId, setBusyId] = useState('');

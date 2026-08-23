@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 // @ts-expect-error Node runs this check with native TypeScript stripping.
-import { calculateMonthlyDues, calculateOutstandingBalance, calculatePaymentResult } from './operationsMath.ts';
+import { calculateMonthlyDues, calculateOutstandingBalance, calculatePaymentResult, getDailyStayActions } from './operationsMath.ts';
 
 test('reservation to checkout keeps an accurate customer ledger', () => {
   const reservation = { id: 'tenant-1', businessType: 'pg', moveInDate: '2026-08-10', rent: 3000, status: 'booked' };
@@ -45,4 +45,21 @@ test('a hotel stay is charged once in its check-in month', () => {
   const hotelStay = { id: 'hotel-1', businessType: 'hotel', moveInDate: '2026-08-30', moveOutDate: '2026-09-02', rent: 5000, status: 'checked out' };
   assert.equal(calculateMonthlyDues([hotelStay], [], '2026-08')[0]?.rent, 5000);
   assert.deepEqual(calculateMonthlyDues([hotelStay], [], '2026-09'), []);
+});
+
+test('daily work highlights due stays and incomplete active profiles', () => {
+  const complete = { documentId: 'ID-1', idProof: 'photo', phone: '9999999999', room: '101' };
+  const tenants = [
+    { ...complete, id: 'arrival', moveInDate: '2026-08-23', status: 'booked' },
+    { ...complete, id: 'future', moveInDate: '2026-08-24', status: 'booked' },
+    { ...complete, id: 'departure', moveInDate: '2026-08-01', moveOutDate: '2026-08-22', status: 'checked in' },
+    { id: 'incomplete', moveInDate: '2026-08-01', status: 'active' },
+    { id: 'done', moveInDate: '2026-07-01', moveOutDate: '2026-08-01', status: 'checked out' },
+  ];
+
+  assert.deepEqual(getDailyStayActions(tenants, '2026-08-23'), {
+    arrivals: 1,
+    departures: 1,
+    incompleteProfiles: 1,
+  });
 });

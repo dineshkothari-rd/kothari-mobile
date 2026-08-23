@@ -35,6 +35,7 @@ import { customerStatusOptions, getCustomerName, getCustomerStatus, getCustomerS
 import { FilterPill } from './FilterPill';
 import { LifecycleMeterSheet, type LifecycleMeterResult } from './LifecycleMeterSheet';
 import { getRoomOccupancy, getRoomSummary, parseRoomLabel, roomNumbers, staysOverlap } from './roomUtils';
+import { getDayKey, matchesDailyStayAction } from '../operations/operationsMath';
 
 type CustomerDraft = {
   additionalGuests: string[];
@@ -147,17 +148,29 @@ function needsCustomerAttention(customer: TenantRecord) {
     || !customer.idProof;
 }
 
-export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
+export function CustomersScreen({
+  initialActionFilter = '',
+  initialMode = 'All',
+  initialStatusFilter = '',
+  isAdmin,
+}: {
+  initialActionFilter?: string;
+  initialMode?: string;
+  initialStatusFilter?: string;
+  isAdmin: boolean;
+}) {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
-  const styles = createStyles(colors);
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
   const meterReadings = useFirestoreCollection<MeterReadingRecord>('meterReadings', { sortBy: 'createdAt' });
   const now = useRealtimeClock();
+  const today = getDayKey(new Date(now));
   const [search, setSearch] = useState('');
+  const [actionFilter, setActionFilter] = useState(initialActionFilter);
   const [typeFilter, setTypeFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [mode, setMode] = useState('All');
+  const [statusFilter, setStatusFilter] = useState(initialStatusFilter);
+  const [mode, setMode] = useState(initialMode);
   const [selectedRoom, setSelectedRoom] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [editingCustomer, setEditingCustomer] = useState<TenantRecord | null>(null);
@@ -172,8 +185,8 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
   const [actionError, setActionError] = useState('');
   const [viewingProof, setViewingProof] = useState<TenantRecord | null>(null);
   const [pendingMeterLifecycle, setPendingMeterLifecycle] = useState<PendingMeterLifecycle | null>(null);
-  const roomSummary = getRoomSummary(tenants.data, now);
-  const roomOccupancy = getRoomOccupancy(tenants.data, now);
+  const roomSummary = useMemo(() => getRoomSummary(tenants.data, now), [now, tenants.data]);
+  const roomOccupancy = useMemo(() => getRoomOccupancy(tenants.data, now), [now, tenants.data]);
   const filtered = useMemo(
     () =>
       tenants.data.filter((tenant) => {
@@ -182,14 +195,16 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
         const roomMode = mode === 'Rooms' ? ['pg', 'hotel'].includes(String(tenant.businessType || 'pg')) && Boolean(tenant.room) : true;
         const roomMatches = selectedRoom ? parseRoomLabel(tenant.room).room === selectedRoom : true;
         const needsAttention = mode === 'Needs attention' ? needsCustomerAttention(tenant) : true;
+        const matchesAction = actionFilter ? matchesDailyStayAction(tenant, actionFilter, today) : true;
 
-        return typeMatches && statusMatches && roomMode && roomMatches && needsAttention && matchesCustomerSearch(tenant, search);
+        return typeMatches && statusMatches && roomMode && roomMatches && needsAttention && matchesAction && matchesCustomerSearch(tenant, search);
       }),
-    [mode, search, selectedRoom, statusFilter, tenants.data, typeFilter],
+    [actionFilter, mode, search, selectedRoom, statusFilter, tenants.data, today, typeFilter],
   );
 
   function updateMode(nextMode: string) {
     setMode(nextMode);
+    setActionFilter('');
     if (nextMode !== 'Rooms') setSelectedRoom('');
   }
 
@@ -756,6 +771,14 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
       {selectedRoom ? (
         <Pressable accessibilityRole="button" onPress={() => setSelectedRoom('')} style={styles.activeRoomFilter}>
           <Text style={styles.activeRoomFilterText}>{t('Room')} {selectedRoom} {t('selected. Tap to clear')}</Text>
+        </Pressable>
+      ) : null}
+
+      {actionFilter ? (
+        <Pressable accessibilityRole="button" onPress={() => setActionFilter('')} style={styles.activeRoomFilter}>
+          <Text style={styles.activeRoomFilterText}>
+            {t(actionFilter === 'arrival' ? 'Ready to check in selected. Tap to clear' : 'Check-outs due selected. Tap to clear')}
+          </Text>
         </Pressable>
       ) : null}
 

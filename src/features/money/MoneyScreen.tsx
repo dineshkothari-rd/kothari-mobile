@@ -428,7 +428,7 @@ export async function downloadPdf({ fileName, html, title }: { fileName: string;
 export function MoneyScreen() {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
-  const styles = createStyles(colors);
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [view, setView] = useState<MoneyView>('dues');
   const [month, setMonth] = useState(getMonthKey());
   const [search, setSearch] = useState('');
@@ -468,11 +468,13 @@ export function MoneyScreen() {
     () => [...activePayments].sort((first, second) => getPaymentTime(second) - getPaymentTime(first)).slice(0, 5),
     [activePayments],
   );
-  const duesSummary = summarizeDues(dues);
-  const visibleDuesSummary = summarizeDues(visibleDues);
-  const collected = getCollectedTotal(visiblePayments);
-  const visiblePaymentTenantIds = new Set(visiblePayments.map(getPaymentTenantId));
-  const balance = dues.filter((due) => visiblePaymentTenantIds.has(due.tenantId)).reduce((sum, due) => sum + due.balance, 0);
+  const duesSummary = useMemo(() => summarizeDues(dues), [dues]);
+  const visibleDuesSummary = useMemo(() => summarizeDues(visibleDues), [visibleDues]);
+  const collected = useMemo(() => getCollectedTotal(visiblePayments), [visiblePayments]);
+  const balance = useMemo(() => {
+    const visiblePaymentTenantIds = new Set(visiblePayments.map(getPaymentTenantId));
+    return dues.filter((due) => visiblePaymentTenantIds.has(due.tenantId)).reduce((sum, due) => sum + due.balance, 0);
+  }, [dues, visiblePayments]);
   const loading = tenants.loading || payments.loading || meterReadings.loading;
   const error = tenants.error || payments.error || meterReadings.error;
   const activeFilters = view === 'dues' ? dueFilters : paymentFilters;
