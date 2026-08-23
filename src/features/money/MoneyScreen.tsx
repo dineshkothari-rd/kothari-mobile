@@ -1470,6 +1470,7 @@ function createStyles(colors: AppColors) {
     },
     amountGrid: {
       flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: spacing.sm,
       marginTop: spacing.md,
     },
@@ -1477,17 +1478,19 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.surfaceMuted,
       borderRadius: radius.md,
       flex: 1,
+      flexBasis: '40%',
+      minHeight: 82,
       padding: spacing.md,
     },
     amountLabel: {
       color: colors.muted,
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: typography.weight.black,
-      textTransform: 'uppercase',
+      lineHeight: 16,
     },
     amountValue: {
       color: colors.success,
-      fontSize: 14,
+      fontSize: 16,
       fontWeight: typography.weight.black,
       marginTop: spacing.xs,
     },
@@ -1667,6 +1670,7 @@ function createStyles(colors: AppColors) {
     },
     formSummary: {
       flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: spacing.sm,
       marginVertical: spacing.lg,
     },
