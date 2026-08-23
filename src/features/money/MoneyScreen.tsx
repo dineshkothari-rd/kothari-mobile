@@ -32,6 +32,7 @@ import {
   getRemainingPaymentBalance,
   isVoided,
   matchesMonth,
+  meterReadingNeedsReview,
   shiftMonth,
   summarizeDues,
 } from '../operations/operationsMath';
@@ -789,7 +790,13 @@ function PaymentFormSheet({
   const selectedBusinessType = getBusinessType(selectedTenant?.businessType);
   const selectedDue = calculateMonthlyDues(selectedTenant ? [selectedTenant] : [], payments, paymentMonth, readings)[0];
   const tenantRent = selectedDue?.baseAmount || 0;
+  const meterAmount = selectedDue?.meterAmount || 0;
   const totalCharge = selectedDue?.rent || 0;
+  const alreadyPaid = selectedDue?.paid || 0;
+  const meterReadingUnderReview = readings.some((reading) =>
+    reading.tenantId === selectedTenantId
+    && reading.month === paymentMonth
+    && meterReadingNeedsReview(readings, reading));
   const paid = toNumber(amountPaid);
   const remainingBalance = getRemainingPaymentBalance(totalCharge, payments, selectedTenantId, paymentMonth);
   const { balance, status } = calculatePaymentResult(totalCharge, payments, selectedTenantId, paymentMonth, paid);
@@ -914,9 +921,16 @@ function PaymentFormSheet({
 
             <View style={styles.formSummary}>
               <AmountCell label={t(selectedBusinessType.feeLabel)} styles={styles} value={money(tenantRent)} />
-              <AmountCell danger={balance > 0} label={t('Balance')} styles={styles} value={money(balance)} />
+              <AmountCell label={t('Electricity')} styles={styles} value={money(meterAmount)} />
+              <AmountCell label={t('Total')} styles={styles} value={money(totalCharge)} />
+              <AmountCell label={t('Already paid')} styles={styles} value={money(alreadyPaid)} />
+              <AmountCell danger={balance > 0} label={t('Balance after payment')} styles={styles} value={money(balance)} />
               <AmountCell label={t('Status')} styles={styles} value={t(status)} />
             </View>
+
+            {meterReadingUnderReview ? (
+              <Text style={styles.errorText}>{t('Electricity charge is not included until the meter reading is corrected.')}</Text>
+            ) : null}
 
             <TextField label="Note" onChangeText={setNote} placeholder="Optional note" value={note} />
 
