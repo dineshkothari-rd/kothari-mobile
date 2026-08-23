@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 // @ts-expect-error Node runs this check with native TypeScript stripping.
-import { calculateMonthlyDues, calculateOutstandingBalance, calculatePaymentResult, getDailyStayActions } from './operationsMath.ts';
+import { calculateMonthlyDues, calculateOutstandingBalance, calculatePaymentResult, getDailyStayActions, getMeterChargeForMonth, getMeterReadingCandidates, getMeterReadingCharges, getRemainingPaymentBalance } from './operationsMath.ts';
 
 test('reservation to checkout keeps an accurate customer ledger', () => {
   const reservation = { id: 'tenant-1', businessType: 'pg', moveInDate: '2026-08-10', rent: 3000, status: 'booked' };
@@ -39,6 +39,41 @@ test('reservation to checkout keeps an accurate customer ledger', () => {
 test('second partial payment closes the balance used on its receipt', () => {
   const previous = [{ id: 'first', amountPaid: 500, month: '2026-08', tenantId: 'tenant-1' }];
   assert.deepEqual(calculatePaymentResult(1000, previous, 'tenant-1', '2026-08', 500), { balance: 0, status: 'Paid' });
+  assert.equal(getRemainingPaymentBalance(1000, previous, 'tenant-1', '2026-08'), 500);
+});
+
+test('overlapping checkout reading does not bill consumed units twice', () => {
+  const readings = [
+    { id: 'check-in', currentReading: 100, month: '2026-08', previousReading: 100, ratePerUnit: 10, tenantId: 'tenant-1', unitsConsumed: 0 },
+    { id: 'manual', billAmount: 500, currentReading: 150, month: '2026-08', previousReading: 100, ratePerUnit: 10, tenantId: 'tenant-1', unitsConsumed: 50 },
+    { id: 'check-out', billAmount: 1000, currentReading: 200, month: '2026-09', previousReading: 100, ratePerUnit: 10, tenantId: 'tenant-1', unitsConsumed: 100 },
+  ];
+
+  assert.equal(getMeterChargeForMonth(readings, 'tenant-1', '2026-08'), 500);
+  assert.equal(getMeterChargeForMonth(readings, 'tenant-1', '2026-09'), 500);
+});
+
+test('first absolute meter reading is a baseline, not consumed units', () => {
+  const readings = [
+    { id: 'baseline', billAmount: 859420, currentReading: 85942, month: '2026-08', previousReading: 0, ratePerUnit: 10, tenantId: 'tenant-1', unitsConsumed: 85942 },
+  ];
+
+  assert.equal(getMeterChargeForMonth(readings, 'tenant-1', '2026-08'), 0);
+  assert.deepEqual(getMeterReadingCharges(readings, 'tenant-1').baseline, { amount: 0, units: 0 });
+});
+
+test('implausible OCR jump is held for review instead of entering financial totals', () => {
+  const readings = [
+    { id: 'check-in', currentReading: 2019, month: '2026-08', previousReading: 0, ratePerUnit: 10, readingType: 'check-in' as const, tenantId: 'tenant-1' },
+    { id: 'bad-ocr', currentReading: 82880, month: '2026-08', previousReading: 2019, ratePerUnit: 10, tenantId: 'tenant-1' },
+  ];
+
+  assert.deepEqual(getMeterReadingCharges(readings, 'tenant-1')['bad-ocr'], { amount: 0, needsReview: true, units: 0 });
+  assert.equal(getMeterChargeForMonth(readings, 'tenant-1', '2026-08'), 0);
+});
+
+test('OCR suggestions reject unrelated numbers and keep plausible meter readings', () => {
+  assert.deepEqual(getMeterReadingCandidates('240V 50Hz display 04882 serial 823880', 2019), [4882]);
 });
 
 test('a hotel stay is charged once in its check-in month', () => {

@@ -4,6 +4,17 @@ import { getCustomerStatusGroup } from '../customers/customerUtils';
 
 const activeStatuses = new Set(['active', 'checked in', 'occupied']);
 const completedStatuses = new Set(['checked out', 'inactive']);
+export const MAX_BILLABLE_METER_UNITS = 10_000;
+
+export function getMeterReadingCandidates(text: string, minimumReading: number) {
+  const matches = text.replace(/[oO]/g, '0').match(/\d+(?:[.,]\d+)?/g) || [];
+
+  return [...new Set(matches.map((match) => Number(match.replace(',', '.'))))]
+    .filter((value) => Number.isFinite(value)
+      && value >= minimumReading
+      && value - minimumReading <= MAX_BILLABLE_METER_UNITS)
+    .sort((first, second) => first - second);
+}
 
 export function getMonthKey(date = new Date()) {
   const year = date.getFullYear();
@@ -133,6 +144,59 @@ export function getExpenseTotal(expenses: ExpenseRecord[] = []) {
   return expenses.reduce((sum, expense) => sum + (isVoided(expense) ? 0 : getExpenseAmount(expense)), 0);
 }
 
+export function getMeterReadingCharges(readings: MeterReadingRecord[] = [], tenantId: string) {
+  let billedThrough: number | undefined;
+
+  return readings
+    .filter((reading) => reading.tenantId === tenantId)
+    .sort((first, second) => toNumber(first.currentReading) - toNumber(second.currentReading))
+    .reduce<Record<string, { amount: number; needsReview?: boolean; units: number }>>((charges, reading) => {
+      const hasMeterValues = reading.previousReading !== undefined && reading.currentReading !== undefined;
+
+      if (!hasMeterValues) {
+        charges[reading.id] = { amount: toNumber(reading.billAmount), units: toNumber(reading.unitsConsumed) };
+        return charges;
+      }
+
+      const previous = toNumber(reading.previousReading);
+      const current = toNumber(reading.currentReading);
+
+      if (billedThrough === undefined && (reading.readingType === 'check-in' || previous === 0)) {
+        billedThrough = current;
+        charges[reading.id] = { amount: 0, units: 0 };
+        return charges;
+      }
+
+      const units = Math.max(0, current - Math.max(previous, billedThrough ?? previous));
+      const recordedUnits = toNumber(reading.unitsConsumed);
+      const rate = toNumber(reading.ratePerUnit)
+        || (recordedUnits > 0 ? toNumber(reading.billAmount) / recordedUnits : 0);
+      billedThrough = Math.max(billedThrough ?? previous, current);
+      charges[reading.id] = units > MAX_BILLABLE_METER_UNITS
+        ? { amount: 0, needsReview: true, units: 0 }
+        : { amount: units * rate, units };
+
+      return charges;
+    }, {});
+}
+
+export function meterReadingNeedsReview(readings: MeterReadingRecord[], reading: MeterReadingRecord) {
+  return Boolean(reading.tenantId && getMeterReadingCharges(readings, reading.tenantId)[reading.id]?.needsReview);
+}
+
+export function getMeterChargeForMonth(
+  readings: MeterReadingRecord[] = [],
+  tenantId: string,
+  month: string,
+) {
+  const charges = getMeterReadingCharges(readings, tenantId);
+
+  return readings.reduce((total, reading) =>
+    reading.tenantId === tenantId && reading.month === month
+      ? total + (charges[reading.id]?.amount || 0)
+      : total, 0);
+}
+
 export function isTenantActiveForMonth(tenant: TenantRecord, month: string) {
   const status = String(tenant.status || 'active').toLowerCase();
 
@@ -175,6 +239,15 @@ export function calculatePaymentResult(
   return { balance: Math.max(0, totalCharge - paid), status: getDueStatus(totalCharge, paid) };
 }
 
+export function getRemainingPaymentBalance(
+  totalCharge: number,
+  payments: PaymentRecord[],
+  tenantId: string,
+  month: string,
+) {
+  return calculatePaymentResult(totalCharge, payments, tenantId, month, 0).balance;
+}
+
 export function calculateMonthlyDues(
   tenants: TenantRecord[] = [],
   payments: PaymentRecord[] = [],
@@ -189,17 +262,11 @@ export function calculateMonthlyDues(
     map[tenantId] = (map[tenantId] || 0) + getPaymentAmount(payment);
     return map;
   }, {});
-  const meterByTenant = meterReadings.reduce<Record<string, number>>((map, reading) => {
-    if (!reading.tenantId || reading.month !== month) return map;
-    map[reading.tenantId] = (map[reading.tenantId] || 0) + toNumber(reading.billAmount);
-    return map;
-  }, {});
-
   return tenants
     .filter((tenant) => isTenantActiveForMonth(tenant, month))
     .map((tenant) => {
       const baseAmount = toNumber(tenant.rent);
-      const meterAmount = meterByTenant[tenant.id] || 0;
+      const meterAmount = getMeterChargeForMonth(meterReadings, tenant.id, month);
       const rent = baseAmount + meterAmount;
       const paid = paymentsByTenant[tenant.id] || 0;
       const balance = Math.max(0, rent - paid);

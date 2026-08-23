@@ -35,7 +35,7 @@ import { customerStatusOptions, getCustomerName, getCustomerStatus, getCustomerS
 import { FilterPill } from './FilterPill';
 import { LifecycleMeterSheet, type LifecycleMeterResult } from './LifecycleMeterSheet';
 import { getAllocationKey, getRoomOccupancy, getRoomSummary, normalizeLibrarySeat, parseRoomLabel, roomNumbers, staysOverlap } from './roomUtils';
-import { getDayKey, matchesDailyStayAction } from '../operations/operationsMath';
+import { getDayKey, matchesDailyStayAction, meterReadingNeedsReview } from '../operations/operationsMath';
 import { syncAllocationGuard } from './allocationTransactions';
 
 type CustomerDraft = {
@@ -470,18 +470,10 @@ export function CustomersScreen({
 
   function getRoomReading(customer: TenantRecord) {
     const room = parseRoomLabel(customer.room).room;
-    const roomReading = meterReadings.data.find((reading) => parseRoomLabel(reading.tenantRoom).room === room);
+    const roomReading = meterReadings.data.find((reading) =>
+      !meterReadingNeedsReview(meterReadings.data, reading)
+      && parseRoomLabel(reading.tenantRoom).room === room);
     return toNumber(roomReading?.currentReading);
-  }
-
-  function getCheckInReading(customer: TenantRecord) {
-    const storedReading = toNumber(customer.checkInMeterReading);
-    if (storedReading) return storedReading;
-
-    const checkInReading = meterReadings.data.find(
-      (reading) => reading.tenantId === customer.id && reading.readingType === 'check-in',
-    );
-    return toNumber(checkInReading?.currentReading) || getRoomReading(customer);
   }
 
   function startMeterLifecycle(customer: TenantRecord, action: PendingMeterLifecycle['action']) {
@@ -489,7 +481,7 @@ export function CustomersScreen({
     setPendingMeterLifecycle({
       action,
       customer,
-      minimumReading: action === 'check-out' ? getCheckInReading(customer) : getRoomReading(customer),
+      minimumReading: getRoomReading(customer),
     });
   }
 
@@ -543,7 +535,7 @@ export function CustomersScreen({
           photoSize: result.photoSize,
           previousReading: minimumReading,
           ratePerUnit: 10,
-          readingSource: 'ocr-locked',
+          readingSource: `ocr-confirmed-${result.photoSource}`,
           readingType: action,
           tenantId: customer.id,
           tenantName: customer.name || customer.fullName || customer.tenantName || 'Unnamed customer',

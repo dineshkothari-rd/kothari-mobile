@@ -29,6 +29,7 @@ import {
   getMonthKey,
   getPaymentAmount,
   getPaymentTenantId,
+  getRemainingPaymentBalance,
   isVoided,
   matchesMonth,
   shiftMonth,
@@ -44,7 +45,7 @@ import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
 type MoneyView = 'dues' | 'collections' | 'expenses';
 type DueStatusFilter = 'due' | 'partial' | 'pending' | 'paid' | 'all';
-type PaymentStatusFilter = 'all' | 'paid' | 'partial' | 'pending' | 'recorded';
+type PaymentStatusFilter = 'all' | 'recorded';
 type PaymentDraft = {
   amountPaid: number;
   balance: number;
@@ -69,24 +70,11 @@ const dueFilters: Array<{ label: string; value: DueStatusFilter }> = [
 
 const paymentFilters: Array<{ label: string; value: PaymentStatusFilter }> = [
   { label: 'All', value: 'all' },
-  { label: 'Paid', value: 'paid' },
-  { label: 'Partial', value: 'partial' },
-  { label: 'Pending', value: 'pending' },
   { label: 'Recorded', value: 'recorded' },
 ];
 
 function getPaymentStatus(payment: PaymentRecord) {
-  const status = String(payment.status || '').trim();
-
-  if (status) return status;
-
-  const totalRent = toNumber(payment.totalRent);
-  const paid = getPaymentAmount(payment);
-  const balance = toNumber(payment.balance);
-
-  if (balance > 0) return paid > 0 ? 'Partial' : 'Pending';
-  if (totalRent && paid >= totalRent) return 'Paid';
-  return 'Recorded';
+  return isVoided(payment) ? 'Voided' : 'Recorded';
 }
 
 function getPaymentTenantName(payment: PaymentRecord, tenants: TenantRecord[]) {
@@ -471,10 +459,6 @@ export function MoneyScreen() {
   const duesSummary = useMemo(() => summarizeDues(dues), [dues]);
   const visibleDuesSummary = useMemo(() => summarizeDues(visibleDues), [visibleDues]);
   const collected = useMemo(() => getCollectedTotal(visiblePayments), [visiblePayments]);
-  const balance = useMemo(() => {
-    const visiblePaymentTenantIds = new Set(visiblePayments.map(getPaymentTenantId));
-    return dues.filter((due) => visiblePaymentTenantIds.has(due.tenantId)).reduce((sum, due) => sum + due.balance, 0);
-  }, [dues, visiblePayments]);
   const loading = tenants.loading || payments.loading || meterReadings.loading;
   const error = tenants.error || payments.error || meterReadings.error;
   const activeFilters = view === 'dues' ? dueFilters : paymentFilters;
@@ -735,7 +719,7 @@ export function MoneyScreen() {
           <Text style={styles.summaryLabel}>{t('Collections')}</Text>
           <Text style={styles.summaryValue}>{money(collected)}</Text>
           <Text style={styles.summaryMeta}>
-            {visiblePayments.length} {t('payments in')} {getMonthDisplay(month)}, {money(balance)} {t('still due')}
+            {visiblePayments.length} {t('payments in')} {getMonthDisplay(month)}, {money(duesSummary.balance)} {t('still due')}
           </Text>
         </View>
       )}
@@ -803,12 +787,11 @@ function PaymentFormSheet({
   const selectedTenantId = tenantId || tenants[0]?.id || '';
   const selectedTenant = tenants.find((tenant) => tenant.id === selectedTenantId);
   const selectedBusinessType = getBusinessType(selectedTenant?.businessType);
-  const tenantRent = toNumber(selectedTenant?.rent);
-  const meterAmount = readings
-    .filter((reading) => reading.tenantId === selectedTenantId && reading.month === paymentMonth)
-    .reduce((sum, reading) => sum + toNumber(reading.billAmount), 0);
-  const totalCharge = tenantRent + meterAmount;
+  const selectedDue = calculateMonthlyDues(selectedTenant ? [selectedTenant] : [], payments, paymentMonth, readings)[0];
+  const tenantRent = selectedDue?.baseAmount || 0;
+  const totalCharge = selectedDue?.rent || 0;
   const paid = toNumber(amountPaid);
+  const remainingBalance = getRemainingPaymentBalance(totalCharge, payments, selectedTenantId, paymentMonth);
   const { balance, status } = calculatePaymentResult(totalCharge, payments, selectedTenantId, paymentMonth, paid);
   const tenantOptions = useMemo(
     () =>
@@ -830,13 +813,23 @@ function PaymentFormSheet({
       return;
     }
 
-    if (!paymentMonth.trim()) {
-      setFormError(t('Enter payment month.'));
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(paymentMonth.trim())) {
+      setFormError(t('Enter the month as YYYY-MM.'));
       return;
     }
 
     if (!paid || paid <= 0) {
       setFormError(t('Enter a valid amount paid.'));
+      return;
+    }
+
+    if (!selectedDue || remainingBalance <= 0) {
+      setFormError(t('No payment is due for this customer in the selected month.'));
+      return;
+    }
+
+    if (paid > remainingBalance) {
+      setFormError(`${t('Amount cannot be more than the remaining balance:')} ${money(remainingBalance)}`);
       return;
     }
 
@@ -847,7 +840,7 @@ function PaymentFormSheet({
       month: paymentMonth.trim(),
       note: note.trim(),
       paidOn: new Date().toLocaleDateString('en-IN'),
-      status,
+      status: 'Recorded',
       tenantId: selectedTenant.id,
       tenantName: getTenantDisplayName(selectedTenant),
       tenantRoom: getCustomerAllocationLabel(selectedTenant),
@@ -1060,7 +1053,6 @@ function PaymentCard({
   const { t } = useLanguage();
   const status = getPaymentStatus(payment);
   const allocation = getPaymentAllocationLabel(payment, tenants);
-  const balance = toNumber(payment.balance);
 
   return (
     <View style={styles.recordCard}>
@@ -1077,7 +1069,6 @@ function PaymentCard({
 
       <View style={styles.amountGrid}>
         <AmountCell label={t('Paid')} styles={styles} value={money(getPaymentAmount(payment))} />
-        <AmountCell danger={balance > 0} label={t('Balance')} styles={styles} value={money(balance)} />
       </View>
 
       {payment.note ? <Text style={styles.note}>{String(payment.note)}</Text> : null}

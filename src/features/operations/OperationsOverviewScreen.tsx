@@ -19,6 +19,7 @@ import {
   getMonthDisplay,
   getMonthKey,
   matchesMonth,
+  meterReadingNeedsReview,
   shiftMonth,
   summarizeDues,
 } from './operationsMath';
@@ -50,7 +51,9 @@ export function OperationsOverviewScreen({ onNavigate }: { onNavigate: (destinat
     const monthlyPayments = payments.data.filter((payment) => matchesMonth(payment, month, paymentDateFields));
     const monthlyExpenses = expenses.data.filter((expense) => matchesMonth(expense, month, expenseDateFields));
     const monthlyEnquiries = enquiries.data.filter((enquiry) => matchesMonth(enquiry, month, activityDateFields));
-    const monthlyReadings = meterReadings.data.filter((reading) => matchesMonth(reading, month, activityDateFields));
+    const monthlyReadings = meterReadings.data.filter((reading) =>
+      matchesMonth(reading, month, activityDateFields)
+      && !meterReadingNeedsReview(meterReadings.data, reading));
     const dues = calculateMonthlyDues(tenants.data, payments.data, month, meterReadings.data);
     const activeCustomers = tenants.data.filter((customer) => getCustomerStatusGroup(customer) === 'active');
     const readPgRooms = new Set(monthlyReadings.map((reading) => parseRoomLabel(reading.tenantRoom).room).filter(Boolean));

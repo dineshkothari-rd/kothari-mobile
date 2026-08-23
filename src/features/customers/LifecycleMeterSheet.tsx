@@ -9,6 +9,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
@@ -18,30 +19,18 @@ import { radius, spacing, typography, useAppTheme, type AppColors } from '../../
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import type { TenantRecord } from '../../shared/types/records';
 import { toNumber } from '../../shared/utils/money';
+import { getMeterReadingCandidates, MAX_BILLABLE_METER_UNITS } from '../operations/operationsMath';
 import { getCustomerName } from './customerUtils';
 
 export type LifecycleMeterResult = {
   ocrText: string;
   photo: string;
   photoSize: number;
+  photoSource: 'camera' | 'gallery';
   reading: number;
 };
 
 type LifecycleAction = 'check-in' | 'check-out';
-
-function extractMeterCandidates(text: string) {
-  const normalized = text.replace(/[oO]/g, '0');
-  const matches = normalized.match(/\d+(?:[.,]\d+)?/g) || [];
-  const values = matches
-    .map((match) => Number(match.replace(',', '.')))
-    .filter((value) => Number.isFinite(value) && value >= 0 && value <= 999999999);
-
-  return [...new Set(values)].sort((first, second) => {
-    const firstDigits = String(Math.trunc(first)).length;
-    const secondDigits = String(Math.trunc(second)).length;
-    return secondDigits - firstDigits || second - first;
-  });
-}
 
 export function LifecycleMeterSheet({
   action,
@@ -65,24 +54,33 @@ export function LifecycleMeterSheet({
   const [photoSize, setPhotoSize] = useState(0);
   const [ocrText, setOcrText] = useState('');
   const [reading, setReading] = useState('');
+  const [readingCandidates, setReadingCandidates] = useState<number[]>([]);
+  const [photoSource, setPhotoSource] = useState<LifecycleMeterResult['photoSource']>('camera');
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState('');
   const title = action === 'check-in' ? t('Check-in meter reading') : t('Check-out meter reading');
 
-  async function captureAndRead() {
+  async function chooseAndRead(source: LifecycleMeterResult['photoSource']) {
     setError('');
-    const permission = await ImagePicker.requestCameraPermissionsAsync();
+    const permission = source === 'camera'
+      ? await ImagePicker.requestCameraPermissionsAsync()
+      : await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (!permission.granted) {
-      setError(t('Camera permission is required to scan the meter.'));
+      setError(t(source === 'camera'
+        ? 'Camera permission is required to scan the meter.'
+        : 'Photo library permission is required to select a meter photo.'));
       return;
     }
 
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: false,
+    const pickerOptions: ImagePicker.ImagePickerOptions = {
+      allowsEditing: true,
       mediaTypes: ['images'],
       quality: 0.8,
-    });
+    };
+    const result = source === 'camera'
+      ? await ImagePicker.launchCameraAsync(pickerOptions)
+      : await ImagePicker.launchImageLibraryAsync(pickerOptions);
 
     if (result.canceled || !result.assets[0]?.uri) return;
 
@@ -101,16 +99,17 @@ export function LifecycleMeterSheet({
 
       const { recognizeText } = await import('@infinitered/react-native-mlkit-text-recognition');
       const recognized = await recognizeText(optimized.uri);
-      const detectedCandidates = extractMeterCandidates(recognized.text);
-      const validCandidates = detectedCandidates.filter((value) => value >= minimumReading);
-      const suggested = validCandidates[0] ?? detectedCandidates[0];
+      const detectedCandidates = getMeterReadingCandidates(recognized.text, minimumReading);
+      const suggested = detectedCandidates[0];
 
       setPhoto(`data:image/jpeg;base64,${optimized.base64}`);
       setPhotoSize(optimized.base64.length);
+      setPhotoSource(source);
       setOcrText(recognized.text);
+      setReadingCandidates(detectedCandidates.slice(0, 6));
       setReading(suggested === undefined ? '' : String(suggested));
 
-      if (suggested === undefined) setError(t('No meter number was detected. Retake the meter photo.'));
+      if (suggested === undefined) setError(t('No safe meter reading was detected. Enter it from the photo.'));
     } catch (scanError) {
       setError(scanError instanceof Error ? scanError.message : t('Could not read meter photo.'));
     } finally {
@@ -136,7 +135,12 @@ export function LifecycleMeterSheet({
       return;
     }
 
-    onSubmit({ ocrText, photo, photoSize, reading: numericReading });
+    if (action === 'check-out' && numericReading - minimumReading > MAX_BILLABLE_METER_UNITS) {
+      setError(t('This reading is unusually high. Check the photo and correct the number.'));
+      return;
+    }
+
+    onSubmit({ ocrText, photo, photoSize, photoSource, reading: numericReading });
   }
 
   return (
@@ -165,25 +169,46 @@ export function LifecycleMeterSheet({
 
             {photo ? <Image resizeMode="contain" source={{ uri: photo }} style={styles.preview} /> : null}
 
-            <Pressable disabled={saving || scanning} onPress={captureAndRead} style={styles.cameraButton}>
-              {scanning ? (
-                <ActivityIndicator color={colors.onBrand} />
-              ) : (
-                <Text style={styles.cameraButtonText}>{t(photo ? 'Retake and scan' : 'Take meter photo')}</Text>
-              )}
-            </Pressable>
+            <View style={styles.photoActions}>
+              <Pressable disabled={saving || scanning} onPress={() => chooseAndRead('camera')} style={styles.cameraButton}>
+                {scanning ? <ActivityIndicator color={colors.onBrand} /> : <Text style={styles.cameraButtonText}>{t(photo ? 'Retake photo' : 'Take meter photo')}</Text>}
+              </Pressable>
+              <Pressable disabled={saving || scanning} onPress={() => chooseAndRead('gallery')} style={styles.galleryButton}>
+                <Text style={styles.galleryButtonText}>{t('Choose from gallery')}</Text>
+              </Pressable>
+            </View>
+
+            {readingCandidates.length > 1 ? (
+              <View style={styles.suggestions}>
+                <Text style={styles.readingLabel}>{t('Numbers found in photo')}</Text>
+                <View style={styles.suggestionRail}>
+                  {readingCandidates.map((candidate) => (
+                    <Pressable key={candidate} onPress={() => setReading(String(candidate))} style={styles.suggestion}>
+                      <Text style={styles.suggestionText}>{candidate}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              </View>
+            ) : null}
 
             <View style={styles.readingField}>
-              <Text style={styles.readingLabel}>{t('Detected meter reading')}</Text>
+              <Text style={styles.readingLabel}>{t('Confirm meter reading')}</Text>
               <View style={styles.lockedReading}>
-                <Text style={[styles.readingValue, !reading && styles.readingPlaceholder]}>
-                  {reading || t('Take a clear meter photo to detect reading')}
-                </Text>
-                <Text style={styles.lockedBadge}>{t('Locked')}</Text>
+                <TextInput
+                  keyboardType="decimal-pad"
+                  onChangeText={(value) => {
+                    setReading(value);
+                    setError('');
+                  }}
+                  placeholder={t('Enter the number shown on the meter')}
+                  placeholderTextColor={colors.muted}
+                  style={styles.readingValue}
+                  value={reading}
+                />
               </View>
             </View>
 
-            <Text style={styles.help}>{t('Reading is fetched from the meter photo and cannot be edited. Retake the photo if it is incorrect.')}</Text>
+            <Text style={styles.help}>{t('OCR is only a suggestion. Match the number with the photo before saving.')}</Text>
 
             <View style={styles.actions}>
               <Pressable disabled={saving || scanning} onPress={onClose} style={styles.secondaryAction}>
@@ -217,8 +242,15 @@ function createStyles(colors: AppColors) {
     minimumValue: { color: colors.text, fontSize: 20, fontWeight: typography.weight.black },
     error: { backgroundColor: colors.dangerSoft, borderRadius: radius.md, color: colors.danger, fontSize: 13, fontWeight: typography.weight.bold, lineHeight: 19, marginTop: spacing.md, padding: spacing.md },
     preview: { backgroundColor: colors.surfaceMuted, borderRadius: radius.md, height: 210, marginTop: spacing.md, width: '100%' },
-    cameraButton: { alignItems: 'center', backgroundColor: colors.ink, borderRadius: radius.md, justifyContent: 'center', marginTop: spacing.md, minHeight: 50 },
+    photoActions: { flexDirection: 'row', gap: spacing.sm, marginTop: spacing.md },
+    cameraButton: { alignItems: 'center', backgroundColor: colors.ink, borderRadius: radius.md, flex: 1, justifyContent: 'center', minHeight: 50 },
     cameraButtonText: { color: colors.onBrand, fontSize: 14, fontWeight: typography.weight.black },
+    galleryButton: { alignItems: 'center', backgroundColor: colors.surfaceMuted, borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, flex: 1, justifyContent: 'center', minHeight: 50 },
+    galleryButtonText: { color: colors.text, fontSize: 14, fontWeight: typography.weight.black },
+    suggestions: { marginTop: spacing.md },
+    suggestionRail: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm, marginTop: spacing.sm },
+    suggestion: { backgroundColor: colors.skySoft, borderRadius: radius.sm, paddingHorizontal: spacing.md, paddingVertical: spacing.sm },
+    suggestionText: { color: colors.text, fontSize: 14, fontWeight: typography.weight.black },
     readingField: { marginTop: spacing.lg },
     readingLabel: { color: colors.muted, fontSize: 12, fontWeight: typography.weight.black, textTransform: 'uppercase' },
     lockedReading: { alignItems: 'center', backgroundColor: colors.surfaceMuted, borderColor: colors.border, borderRadius: radius.md, borderWidth: 1, flexDirection: 'row', justifyContent: 'space-between', marginTop: spacing.sm, minHeight: 56, paddingHorizontal: spacing.md },

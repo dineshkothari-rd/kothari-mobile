@@ -12,7 +12,7 @@ import type { MeterReadingRecord, NoticeRecord, PaymentRecord, SupportRequestRec
 import { money } from '../../shared/utils/money';
 import { getBusinessType } from '../customers/businessTypes';
 import { getCustomerAllocationLabel, getCustomerName, getCustomerStatusGroup, getCustomerStatusLabel } from '../customers/customerUtils';
-import { calculateOutstandingBalance, getMonthDisplay, getMonthKey, getPaymentAmount, isVoided } from '../operations/operationsMath';
+import { calculateOutstandingBalance, getMeterReadingCharges, getMonthDisplay, getMonthKey, getPaymentAmount, isVoided } from '../operations/operationsMath';
 import { buildReceiptHtml, downloadPdf } from '../money/MoneyScreen';
 import { mergeCustomerNotices } from './customerNotices';
 
@@ -39,6 +39,10 @@ export function CustomerWorkspaceScreen({ onSignOut, profile }: { onSignOut: () 
   const [requestBusy, setRequestBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [receiptBusyId, setReceiptBusyId] = useState('');
+  const meterCharges = useMemo(
+    () => getMeterReadingCharges(meterReadings, customer?.id || ''),
+    [customer?.id, meterReadings],
+  );
   const month = getMonthKey();
   const lifecycleGroup = customer ? getCustomerStatusGroup(customer) : 'reserved';
   const hasStarted = lifecycleGroup === 'active' || lifecycleGroup === 'completed';
@@ -177,9 +181,13 @@ export function CustomerWorkspaceScreen({ onSignOut, profile }: { onSignOut: () 
                     <View key={reading.id} style={[styles.row, index > 0 && styles.rowBorder]}>
                       <View style={styles.rowCopy}>
                         <Text style={styles.rowTitle}>{String(reading.month || t('Meter reading'))}</Text>
-                        <Text style={styles.rowMeta}>{String(reading.unitsConsumed || 0)} {t('Units')}</Text>
+                        <Text style={styles.rowMeta}>
+                          {meterCharges[reading.id]?.needsReview
+                            ? t('Reading under review')
+                            : `${meterCharges[reading.id]?.units || 0} ${t('Units')}`}
+                        </Text>
                       </View>
-                      <Text style={styles.rowValue}>{money(reading.billAmount)}</Text>
+                      <Text style={styles.rowValue}>{money(meterCharges[reading.id]?.amount)}</Text>
                     </View>
                   )) : <Text style={styles.emptyText}>{t('No readings found')}</Text>}
                 </View>
