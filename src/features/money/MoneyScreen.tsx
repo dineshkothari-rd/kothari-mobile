@@ -1277,19 +1277,18 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       borderRadius: radius.sm,
       flex: 1,
-      minHeight: 44,
+      minHeight: 40,
       justifyContent: 'center',
       paddingHorizontal: spacing.xs,
-      paddingVertical: 4,
+      paddingVertical: spacing.xs,
     },
     switchItemActive: {
       backgroundColor: colors.surface,
     },
     switchText: {
       color: colors.panelMuted,
-      fontSize: 12,
+      fontSize: 13,
       fontWeight: typography.weight.black,
-      lineHeight: 16,
       textAlign: 'center',
     },
     switchTextActive: {
