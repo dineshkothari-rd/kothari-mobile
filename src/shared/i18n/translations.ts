@@ -49,7 +49,7 @@ export const translations: Record<AppLanguage, Record<string, string>> = {
     'Camera or gallery photo required.': 'Add a photo from your camera or gallery to continue.',
     'Choose how the app should look and read on this device.': 'Choose the language and appearance that feel right for you.',
     'Choose the language you want to use in the app.': 'Choose the language you’re most comfortable with.',
-    'Collections': 'Payments received',
+    'Collections': 'Payments',
     'Collections, dues, expenses, and follow-ups for this month.': 'See what came in, what went out, and what still needs your attention.',
     'Convert': 'Add as customer',
     'Converted': 'Customer added',

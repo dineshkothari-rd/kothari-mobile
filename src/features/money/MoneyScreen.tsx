@@ -1270,6 +1270,7 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.overlayFaint,
       borderRadius: radius.md,
       flexDirection: 'row',
+      gap: spacing.xs,
       padding: spacing.xs,
     },
     switchItem: {
@@ -1278,6 +1279,8 @@ function createStyles(colors: AppColors) {
       flex: 1,
       minHeight: 40,
       justifyContent: 'center',
+      paddingHorizontal: spacing.xs,
+      paddingVertical: spacing.xs,
     },
     switchItemActive: {
       backgroundColor: colors.surface,
@@ -1286,6 +1289,7 @@ function createStyles(colors: AppColors) {
       color: colors.panelMuted,
       fontSize: 13,
       fontWeight: typography.weight.black,
+      textAlign: 'center',
     },
     switchTextActive: {
       color: colors.text,
