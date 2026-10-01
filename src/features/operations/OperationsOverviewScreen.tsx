@@ -5,7 +5,7 @@ import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import { useRealtimeClock } from '../../shared/hooks/useRealtimeClock';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
-import type { EnquiryRecord, ExpenseRecord, MeterReadingRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
+import type { EnquiryRecord, ExpenseRecord, InvoiceRecord, MeterReadingRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
 import { money } from '../../shared/utils/money';
 import { businessTypeOptions } from '../customers/businessTypes';
 import { getCustomerStatusGroup } from '../customers/customerUtils';
@@ -18,6 +18,7 @@ import {
   getDayKey,
   getMonthDisplay,
   getMonthKey,
+  isVoided,
   matchesMonth,
   meterReadingNeedsReview,
   shiftMonth,
@@ -42,8 +43,9 @@ export function OperationsOverviewScreen({ onNavigate }: { onNavigate: (destinat
   const expenses = useFirestoreCollection<ExpenseRecord>('expenses', { sortBy: 'createdAt' });
   const enquiries = useFirestoreCollection<EnquiryRecord>('enquiries', { sortBy: 'createdAt' });
   const meterReadings = useFirestoreCollection<MeterReadingRecord>('meterReadings', { sortBy: 'createdAt' });
-  const loading = tenants.loading || payments.loading || expenses.loading || enquiries.loading || meterReadings.loading;
-  const error = tenants.error || payments.error || expenses.error || enquiries.error || meterReadings.error;
+  const invoices = useFirestoreCollection<InvoiceRecord>('invoices', { sortBy: 'issuedAt' });
+  const loading = tenants.loading || payments.loading || expenses.loading || enquiries.loading || meterReadings.loading || invoices.loading;
+  const error = tenants.error || payments.error || expenses.error || enquiries.error || meterReadings.error || invoices.error;
   const currentMonth = getMonthKey();
   const today = getDayKey(new Date(now));
   const roomSummary = useMemo(() => getRoomSummary(tenants.data, now), [now, tenants.data]);
@@ -53,8 +55,9 @@ export function OperationsOverviewScreen({ onNavigate }: { onNavigate: (destinat
     const monthlyEnquiries = enquiries.data.filter((enquiry) => matchesMonth(enquiry, month, activityDateFields));
     const monthlyReadings = meterReadings.data.filter((reading) =>
       matchesMonth(reading, month, activityDateFields)
+      && !isVoided(reading)
       && !meterReadingNeedsReview(meterReadings.data, reading));
-    const dues = calculateMonthlyDues(tenants.data, payments.data, month, meterReadings.data);
+    const dues = calculateMonthlyDues(tenants.data, payments.data, month, meterReadings.data, invoices.data);
     const activeCustomers = tenants.data.filter((customer) => getCustomerStatusGroup(customer) === 'active');
     const readPgRooms = new Set(monthlyReadings.map((reading) => parseRoomLabel(reading.tenantRoom).room).filter(Boolean));
     const activePgRooms = new Set(
@@ -82,7 +85,7 @@ export function OperationsOverviewScreen({ onNavigate }: { onNavigate: (destinat
       newEnquiries: monthlyEnquiries.filter((enquiry) => String(enquiry.status || 'New').toLowerCase() === 'new'),
       roomsMissingReading: [...activePgRooms].filter((room) => !readPgRooms.has(room)).length,
     };
-  }, [enquiries.data, expenses.data, meterReadings.data, month, payments.data, tenants.data, today]);
+  }, [enquiries.data, expenses.data, invoices.data, meterReadings.data, month, payments.data, tenants.data, today]);
   const { activeCustomers, businessSnapshots, collected, dailyActions, duesSummary, expenseTotal, net, newEnquiries, roomsMissingReading } = snapshot;
 
   return (

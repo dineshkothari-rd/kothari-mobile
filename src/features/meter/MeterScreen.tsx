@@ -27,7 +27,7 @@ import { getCustomerAllocationLabel, getCustomerStatus } from '../customers/cust
 import { isRoomCustomer } from '../customers/roomUtils';
 import { LifecycleMeterSheet, type LifecycleMeterResult } from '../customers/LifecycleMeterSheet';
 import { syncAllocationGuard } from '../customers/allocationTransactions';
-import { getMeterReadingCharges, getMonthKey, meterReadingNeedsReview } from '../operations/operationsMath';
+import { getMeterReadingCharges, getMonthKey, isVoided, meterReadingNeedsReview } from '../operations/operationsMath';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
 const RATE_PER_UNIT = 10;
@@ -96,6 +96,7 @@ export function MeterScreen() {
   const filtered = useMemo(
     () =>
       readings.data.filter((reading) => {
+        if (isVoided(reading)) return false;
         const tenantMatches = tenantFilter ? reading.tenantId === tenantFilter : true;
         return tenantMatches && matchesSearch(reading, search);
       }),
@@ -150,7 +151,7 @@ export function MeterScreen() {
     }
   }
 
-  async function deleteReading(readingId: string) {
+  async function voidReading(readingId: string) {
     setDeletingId(readingId);
     setActionError('');
 
@@ -158,20 +159,20 @@ export function MeterScreen() {
       const actorUid = auth.currentUser?.uid;
       if (!actorUid) throw new Error(t('Please sign in again.'));
       const batch = writeBatch(db);
-      batch.delete(doc(db, 'meterReadings', readingId));
-      batch.set(doc(collection(db, 'auditEvents')), { action: 'meter.deleted', actorUid, createdAt: serverTimestamp(), entityId: readingId, entityType: 'meterReading' });
+      batch.update(doc(db, 'meterReadings', readingId), { status: 'Voided', voidedAt: serverTimestamp(), voidedBy: actorUid });
+      batch.set(doc(collection(db, 'auditEvents')), { action: 'meter.voided', actorUid, createdAt: serverTimestamp(), entityId: readingId, entityType: 'meterReading' });
       await batch.commit();
     } catch (deleteError) {
-      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete meter reading.'));
+      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not void meter reading.'));
     } finally {
       setDeletingId('');
     }
   }
 
   function confirmDelete(reading: MeterReadingRecord) {
-    Alert.alert(t('Delete reading?'), `${t('Delete reading for')} ${reading.tenantName || t('this customer')}? ${t('This cannot be undone.')}`, [
+    Alert.alert(t('Void reading?'), `${t('Void reading for')} ${reading.tenantName || t('this customer')}? ${t('The original record will remain in the audit trail.')}`, [
       { text: t('Cancel'), style: 'cancel' },
-      { text: t('Delete'), style: 'destructive', onPress: () => deleteReading(reading.id) },
+      { text: t('Void'), style: 'destructive', onPress: () => voidReading(reading.id) },
     ]);
   }
 
@@ -530,7 +531,7 @@ function MeterCard({
       </View>
 
       {readingCharge?.needsReview ? (
-        <Text style={styles.errorText}>{t('This reading looks incorrect. Delete it and add the correct reading.')}</Text>
+        <Text style={styles.errorText}>{t('This reading looks incorrect. Void it and add the correct reading.')}</Text>
       ) : null}
 
       {reading.photo ? (
@@ -551,7 +552,7 @@ function MeterCard({
 
       {reading.note ? <Text style={styles.note}>{String(reading.note)}</Text> : null}
       <Pressable disabled={deleting} onPress={onDelete} style={[styles.deleteButton, deleting && styles.disabled]}>
-        <Text style={styles.deleteText}>{t(deleting ? 'Deleting...' : 'Delete reading')}</Text>
+        <Text style={styles.deleteText}>{t(deleting ? 'Voiding...' : 'Void reading')}</Text>
       </Pressable>
     </View>
   );

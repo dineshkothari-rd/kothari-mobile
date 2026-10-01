@@ -1,4 +1,4 @@
-import type { DueRecord, ExpenseRecord, MeterReadingRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
+import type { DueRecord, ExpenseRecord, InvoiceRecord, MeterReadingRecord, PaymentRecord, SettlementRecord, TenantRecord } from '../../shared/types/records';
 import { toNumber } from '../../shared/utils/money';
 import { getCustomerStatusGroup } from '../customers/customerUtils';
 
@@ -132,7 +132,7 @@ export function getExpenseAmount(expense: ExpenseRecord) {
   return toNumber(expense.amount ?? expense.total ?? expense.cost);
 }
 
-export function isVoided(record: PaymentRecord | ExpenseRecord) {
+export function isVoided(record: PaymentRecord | ExpenseRecord | MeterReadingRecord) {
   return Boolean(record.voidedAt) || String(record.status || '').toLowerCase() === 'voided';
 }
 
@@ -148,7 +148,7 @@ export function getMeterReadingCharges(readings: MeterReadingRecord[] = [], tena
   let billedThrough: number | undefined;
 
   return readings
-    .filter((reading) => reading.tenantId === tenantId)
+    .filter((reading) => reading.tenantId === tenantId && !isVoided(reading))
     .sort((first, second) => toNumber(first.currentReading) - toNumber(second.currentReading))
     .reduce<Record<string, { amount: number; needsReview?: boolean; units: number }>>((charges, reading) => {
       const hasMeterValues = reading.previousReading !== undefined && reading.currentReading !== undefined;
@@ -181,7 +181,7 @@ export function getMeterReadingCharges(readings: MeterReadingRecord[] = [], tena
 }
 
 export function meterReadingNeedsReview(readings: MeterReadingRecord[], reading: MeterReadingRecord) {
-  return Boolean(reading.tenantId && getMeterReadingCharges(readings, reading.tenantId)[reading.id]?.needsReview);
+  return isVoided(reading) || Boolean(reading.tenantId && getMeterReadingCharges(readings, reading.tenantId)[reading.id]?.needsReview);
 }
 
 export function getMeterChargeForMonth(
@@ -253,6 +253,7 @@ export function calculateMonthlyDues(
   payments: PaymentRecord[] = [],
   month = getMonthKey(),
   meterReadings: MeterReadingRecord[] = [],
+  invoices: InvoiceRecord[] = [],
 ): DueRecord[] {
   const paymentsByTenant = payments.reduce<Record<string, number>>((map, payment) => {
     const tenantId = getPaymentTenantId(payment);
@@ -265,16 +266,17 @@ export function calculateMonthlyDues(
   return tenants
     .filter((tenant) => isTenantActiveForMonth(tenant, month))
     .map((tenant) => {
-      const baseAmount = toNumber(tenant.rent);
-      const meterAmount = getMeterChargeForMonth(meterReadings, tenant.id, month);
-      const rent = baseAmount + meterAmount;
+      const invoice = invoices.find((item) => item.tenantId === tenant.id && item.month === month);
+      const baseAmount = invoice ? toNumber(invoice.baseAmount) : toNumber(tenant.rent);
+      const meterAmount = invoice ? toNumber(invoice.meterAmount) : getMeterChargeForMonth(meterReadings, tenant.id, month);
+      const rent = invoice ? toNumber(invoice.total) : baseAmount + meterAmount;
       const paid = paymentsByTenant[tenant.id] || 0;
       const balance = Math.max(0, rent - paid);
 
       return {
         baseAmount,
         balance,
-        businessType: tenant.businessType || 'pg',
+        businessType: invoice?.businessType || tenant.businessType || 'pg',
         id: `${tenant.id}-${month}`,
         meterAmount,
         month,
@@ -283,8 +285,8 @@ export function calculateMonthlyDues(
         rent,
         status: getDueStatus(rent, paid),
         tenantId: tenant.id,
-        tenantName: getTenantName(tenant),
-        tenantRoom: tenant.room || '',
+        tenantName: invoice?.tenantName || getTenantName(tenant),
+        tenantRoom: invoice?.tenantRoom || tenant.room || '',
       };
     });
 }
@@ -294,7 +296,18 @@ export function calculateOutstandingBalance(
   payments: PaymentRecord[] = [],
   meterReadings: MeterReadingRecord[] = [],
   throughMonth = getMonthKey(),
+  invoices: InvoiceRecord[] = [],
+  settlements: SettlementRecord[] = [],
 ) {
+  const settlement = settlements
+    .filter((item) => item.tenantId === tenant.id && item.status === 'Final')
+    .sort((first, second) => Number(second.finalizedAt?.seconds || 0) - Number(first.finalizedAt?.seconds || 0))[0];
+  if (settlement) {
+    const tenantPayments = payments.filter((payment) => getPaymentTenantId(payment) === tenant.id);
+    const paidAfterSettlement = Math.max(0, getCollectedTotal(tenantPayments) - toNumber(settlement.paidAtSettlement));
+    return Math.max(0, toNumber(settlement.finalBalance) - paidAfterSettlement);
+  }
+
   const status = String(tenant.status || 'active').toLowerCase();
   if (status === 'booked' || status === 'cancelled') return 0;
 
@@ -311,9 +324,61 @@ export function calculateOutstandingBalance(
   }
 
   return months.reduce(
-    (balance, month) => balance + (calculateMonthlyDues([tenant], payments, month, meterReadings)[0]?.balance || 0),
+    (balance, month) => balance + (calculateMonthlyDues([tenant], payments, month, meterReadings, invoices)[0]?.balance || 0),
     0,
   );
+}
+
+export function calculateSettlement({
+  depositHeld,
+  discount,
+  extraCharge,
+  ledgerBalance,
+  paymentReceived,
+}: {
+  depositHeld: number;
+  discount: number;
+  extraCharge: number;
+  ledgerBalance: number;
+  paymentReceived: number;
+}) {
+  const grossDue = Math.max(0, ledgerBalance + extraCharge - discount);
+  const depositApplied = Math.min(depositHeld, grossDue);
+  const amountAfterDeposit = grossDue - depositApplied;
+  const received = Math.min(paymentReceived, amountAfterDeposit);
+
+  return {
+    depositApplied,
+    finalBalance: amountAfterDeposit - received,
+    grossDue,
+    paymentReceived: received,
+    refundDue: Math.max(0, depositHeld - grossDue),
+  };
+}
+
+function csvCell(value: unknown) {
+  const text = String(value ?? '');
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+export function buildDuesCsv(dues: DueRecord[]) {
+  const rows = [
+    ['Month', 'Customer', 'Allocation', 'Business', 'Base amount', 'Meter amount', 'Total', 'Paid', 'Balance', 'Status'],
+    ...dues.map((due) => [
+      due.month,
+      due.tenantName,
+      due.tenantRoom,
+      due.businessType,
+      due.baseAmount,
+      due.meterAmount,
+      due.rent,
+      due.paid,
+      due.balance,
+      due.status,
+    ]),
+  ];
+
+  return rows.map((row) => row.map(csvCell).join(',')).join('\n');
 }
 
 export function summarizeDues(dues: DueRecord[] = []) {

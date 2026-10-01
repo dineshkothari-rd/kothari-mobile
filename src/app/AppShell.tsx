@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import * as NavigationBar from 'expo-navigation-bar';
+import { NavigationBar } from 'expo-navigation-bar';
+import { usePreventScreenCapture } from 'expo-screen-capture';
 import * as SystemUI from 'expo-system-ui';
-import { Animated, AppState, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Animated, AppState, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { firebaseConfigStatus } from '../config/firebaseConfig';
 import { SignInScreen } from '../features/auth/SignInScreen';
@@ -143,14 +144,13 @@ function AppShellContent({ session }: { session: ReturnType<typeof useAppSession
 
   useEffect(() => {
     SystemUI.setBackgroundColorAsync(colors.canvas).catch(() => undefined);
-    if (Platform.OS === 'android') {
-      NavigationBar.setButtonStyleAsync(isDark ? 'light' : 'dark').catch(() => undefined);
-    }
-  }, [colors.canvas, isDark]);
+  }, [colors.canvas]);
 
   return (
     <AppErrorBoundary>
       <View style={styles.safeArea}>
+        {session.profile ? <AuthenticatedPrivacyShield /> : null}
+        <NavigationBar style={isDark ? 'dark' : 'light'} />
         <StatusBar style={isDark ? 'light' : 'dark'} />
         {!firebaseConfigStatus.ready ? (
           <MissingConfigScreen />
@@ -175,6 +175,11 @@ function AppShellContent({ session }: { session: ReturnType<typeof useAppSession
       </View>
     </AppErrorBoundary>
   );
+}
+
+function AuthenticatedPrivacyShield() {
+  usePreventScreenCapture('authenticated-session');
+  return null;
 }
 
 function EmailVerificationScreen({ email, onRefresh, onSend, onSignOut }: {
@@ -373,7 +378,7 @@ const splashStyles = StyleSheet.create({
     flex: 1,
   },
   overlay: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     alignItems: 'center',
     backgroundColor: '#0F172A',
     justifyContent: 'center',

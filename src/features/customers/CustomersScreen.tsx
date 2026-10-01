@@ -25,7 +25,7 @@ import { auth, db, getProvisioningAuth } from '../../lib/firebase/client';
 import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import { useRealtimeClock } from '../../shared/hooks/useRealtimeClock';
-import type { MeterReadingRecord, TenantRecord } from '../../shared/types/records';
+import type { InvoiceRecord, MeterReadingRecord, PaymentRecord, SettlementRecord, TenantRecord } from '../../shared/types/records';
 import { toNumber } from '../../shared/utils/money';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import { businessTypeOptions, getBusinessType } from './businessTypes';
@@ -35,8 +35,9 @@ import { customerStatusOptions, getCustomerName, getCustomerStatus, getCustomerS
 import { FilterPill } from './FilterPill';
 import { LifecycleMeterSheet, type LifecycleMeterResult } from './LifecycleMeterSheet';
 import { getAllocationKey, getRoomOccupancy, getRoomSummary, normalizeLibrarySeat, parseRoomLabel, roomNumbers, staysOverlap } from './roomUtils';
-import { getDayKey, matchesDailyStayAction, meterReadingNeedsReview } from '../operations/operationsMath';
+import { calculateOutstandingBalance, calculateSettlement, getCollectedTotal, getDayKey, getMeterChargeForMonth, getMonthKey, matchesDailyStayAction, meterReadingNeedsReview } from '../operations/operationsMath';
 import { syncAllocationGuard } from './allocationTransactions';
+import { CheckoutSettlementSheet, type CheckoutSettlementDraft } from './CheckoutSettlementSheet';
 
 type CustomerDraft = {
   additionalGuests: string[];
@@ -70,6 +71,12 @@ type CustomerDraft = {
 type PendingMeterLifecycle = {
   action: 'check-in' | 'check-out';
   customer: TenantRecord;
+  minimumReading: number;
+};
+
+type PendingSettlement = {
+  customer: TenantRecord;
+  meterResult?: LifecycleMeterResult;
   minimumReading: number;
 };
 
@@ -165,6 +172,9 @@ export function CustomersScreen({
   const styles = useMemo(() => createStyles(colors), [colors]);
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
   const meterReadings = useFirestoreCollection<MeterReadingRecord>('meterReadings', { sortBy: 'createdAt' });
+  const invoices = useFirestoreCollection<InvoiceRecord>('invoices', { sortBy: 'issuedAt' });
+  const payments = useFirestoreCollection<PaymentRecord>('payments', { sortBy: 'createdAt' });
+  const settlements = useFirestoreCollection<SettlementRecord>('settlements', { sortBy: 'finalizedAt' });
   const now = useRealtimeClock();
   const today = getDayKey(new Date(now));
   const [search, setSearch] = useState('');
@@ -186,6 +196,45 @@ export function CustomersScreen({
   const [actionError, setActionError] = useState('');
   const [viewingProof, setViewingProof] = useState<TenantRecord | null>(null);
   const [pendingMeterLifecycle, setPendingMeterLifecycle] = useState<PendingMeterLifecycle | null>(null);
+  const [pendingSettlement, setPendingSettlement] = useState<PendingSettlement | null>(null);
+  const [savingSettlement, setSavingSettlement] = useState(false);
+  const settlementPreview = useMemo(() => {
+    if (!pendingSettlement) return { automaticCharge: 0, ledgerBalance: 0, month: getMonthKey() };
+
+    const month = getMonthKey(new Date(now));
+    const units = pendingSettlement.meterResult
+      ? Math.max(0, pendingSettlement.meterResult.reading - pendingSettlement.minimumReading)
+      : 0;
+    const meterCharge = units * 10;
+    const previewReadings = pendingSettlement.meterResult ? [...meterReadings.data, {
+      id: 'checkout-preview',
+      billAmount: meterCharge,
+      currentReading: pendingSettlement.meterResult.reading,
+      month,
+      previousReading: pendingSettlement.minimumReading,
+      ratePerUnit: 10,
+      readingType: 'check-out' as const,
+      tenantId: pendingSettlement.customer.id,
+      unitsConsumed: units,
+    }] : meterReadings.data;
+    const currentInvoice = invoices.data.find((invoice) =>
+      invoice.tenantId === pendingSettlement.customer.id && invoice.month === month);
+
+    return {
+      automaticCharge: currentInvoice
+        ? Math.max(0, getMeterChargeForMonth(previewReadings, pendingSettlement.customer.id, month) - currentInvoice.meterAmount)
+        : 0,
+      ledgerBalance: calculateOutstandingBalance(
+        pendingSettlement.customer,
+        payments.data,
+        previewReadings,
+        month,
+        invoices.data,
+        settlements.data,
+      ),
+      month,
+    };
+  }, [invoices.data, meterReadings.data, now, payments.data, pendingSettlement, settlements.data]);
   const roomSummary = useMemo(() => getRoomSummary(tenants.data, now), [now, tenants.data]);
   const roomOccupancy = useMemo(() => getRoomOccupancy(tenants.data, now), [now, tenants.data]);
   const filtered = useMemo(
@@ -227,12 +276,12 @@ export function CustomersScreen({
     const savedPayload = requiresInitialMeter ? { ...payload, status: 'booked' } : payload;
     const leavingCheckedInState = ['active', 'checked in', 'occupied'].includes(previousStatus) && payload.status !== previousStatus;
     const isMeterLifecycleTransition = editingCustomer
-      && String(editingCustomer.businessType || 'pg') === 'pg'
+      && ['pg', 'hotel'].includes(String(editingCustomer.businessType || 'pg'))
       && payload.status !== previousStatus
       && (['checked in', 'checked out'].includes(payload.status) || leavingCheckedInState);
 
     if (isMeterLifecycleTransition) {
-      Alert.alert(t('Meter photo required'), t('Use the Check in or Check out action from customer details so the meter photo and reading are saved.'));
+      Alert.alert(t('Use checkout action'), t('Use the Check in or Check out action from customer details so the financial settlement is saved.'));
       return;
     }
 
@@ -490,6 +539,11 @@ export function CustomersScreen({
 
     const { action, customer, minimumReading } = pendingMeterLifecycle;
     const checkingIn = action === 'check-in';
+    if (!checkingIn) {
+      setPendingMeterLifecycle(null);
+      setPendingSettlement({ customer, meterResult: result, minimumReading });
+      return;
+    }
     const setBusy = checkingIn ? setCheckingInId : setCheckingOutId;
     const actorUid = auth.currentUser?.uid;
     if (!actorUid) {
@@ -561,6 +615,10 @@ export function CustomersScreen({
 
   async function completeRoomLifecycle(customer: TenantRecord, action: PendingMeterLifecycle['action']) {
     const checkingIn = action === 'check-in';
+    if (!checkingIn) {
+      setPendingSettlement({ customer, minimumReading: 0 });
+      return;
+    }
     const setBusy = checkingIn ? setCheckingInId : setCheckingOutId;
     const actorUid = auth.currentUser?.uid;
 
@@ -606,6 +664,114 @@ export function CustomersScreen({
     }
   }
 
+  async function finalizeCheckout(draft: CheckoutSettlementDraft) {
+    if (!pendingSettlement) return;
+    const actorUid = auth.currentUser?.uid;
+    if (!actorUid) return setActionError(t('Please sign in again.'));
+
+    const { customer, meterResult, minimumReading } = pendingSettlement;
+    const result = calculateSettlement({ ...draft, ledgerBalance: settlementPreview.ledgerBalance });
+    const eventTime = new Date();
+    const tenantPayments = payments.data.filter((payment) => payment.tenantId === customer.id || payment.userId === customer.id);
+    const paidAtSettlement = getCollectedTotal(tenantPayments) + result.paymentReceived;
+    const paymentRef = doc(collection(db, 'payments'));
+    const readingRef = doc(collection(db, 'meterReadings'));
+    const tenantUpdate = {
+      checkedOutAt: serverTimestamp(),
+      moveOutDate: getLocalDate(eventTime),
+      moveOutTime: eventTime.toTimeString().slice(0, 5),
+      ...(meterResult ? { checkOutMeterReading: meterResult.reading, checkOutMeterReadingId: readingRef.id } : {}),
+      status: 'checked out',
+      updatedAt: serverTimestamp(),
+    };
+    const nextCustomer = { ...customer, ...tenantUpdate, status: 'checked out' } as TenantRecord;
+
+    setSavingSettlement(true);
+    setCheckingOutId(customer.id);
+    setActionError('');
+    try {
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customer.id, customer, nextCustomer, tenants.data);
+
+        if (meterResult) {
+          const unitsConsumed = Math.max(0, meterResult.reading - minimumReading);
+          transaction.set(readingRef, {
+            billAmount: unitsConsumed * 10,
+            createdAt: serverTimestamp(),
+            currentReading: meterResult.reading,
+            month: settlementPreview.month,
+            note: 'Check-out meter photo',
+            ocrText: meterResult.ocrText,
+            photo: meterResult.photo,
+            photoSize: meterResult.photoSize,
+            previousReading: minimumReading,
+            ratePerUnit: 10,
+            readingSource: `ocr-confirmed-${meterResult.photoSource}`,
+            readingType: 'check-out',
+            tenantId: customer.id,
+            tenantName: getCustomerName(customer),
+            tenantRoom: customer.room || '',
+            unitsConsumed,
+          });
+        }
+
+        if (result.paymentReceived > 0) {
+          transaction.set(paymentRef, {
+            amountPaid: result.paymentReceived,
+            balance: result.finalBalance,
+            businessType: customer.businessType || 'pg',
+            createdAt: serverTimestamp(),
+            createdBy: actorUid,
+            month: settlementPreview.month,
+            note: 'Checkout settlement',
+            paidOn: eventTime.toLocaleDateString('en-IN'),
+            status: 'Recorded',
+            tenantId: customer.id,
+            tenantName: getCustomerName(customer),
+            tenantRoom: customer.room || '',
+            totalRent: result.grossDue,
+          });
+          transaction.set(doc(collection(db, 'auditEvents')), {
+            action: 'payment.created', actorUid, createdAt: serverTimestamp(), entityId: paymentRef.id, entityType: 'payment',
+          });
+        }
+
+        transaction.update(doc(db, 'tenants', customer.id), tenantUpdate);
+        transaction.set(doc(db, 'settlements', customer.id), {
+          depositApplied: result.depositApplied,
+          depositHeld: draft.depositHeld,
+          discount: draft.discount,
+          extraCharge: draft.extraCharge,
+          finalBalance: result.finalBalance,
+          finalizedAt: serverTimestamp(),
+          finalizedBy: actorUid,
+          grossDue: result.grossDue,
+          ledgerBalance: settlementPreview.ledgerBalance,
+          month: settlementPreview.month,
+          paidAtSettlement,
+          paymentReceived: result.paymentReceived,
+          refundDue: result.refundDue,
+          refundStatus: result.refundDue > 0 ? 'Due' : 'None',
+          status: 'Final',
+          tenantId: customer.id,
+          tenantName: getCustomerName(customer),
+        });
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: 'settlement.finalized', actorUid, createdAt: serverTimestamp(), entityId: customer.id, entityType: 'settlement',
+        });
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: 'customer.checked_out', actorUid, createdAt: serverTimestamp(), customerId: customer.id, customerName: getCustomerName(customer),
+        });
+      });
+      setPendingSettlement(null);
+    } catch (settlementError) {
+      setActionError(settlementError instanceof Error ? settlementError.message : t('Could not finalize checkout.'));
+    } finally {
+      setSavingSettlement(false);
+      setCheckingOutId('');
+    }
+  }
+
   function confirmCheckIn(customer: TenantRecord) {
     if (String(customer.businessType || 'pg') === 'pg') {
       startMeterLifecycle(customer, 'check-in');
@@ -619,6 +785,10 @@ export function CustomersScreen({
   }
 
   function confirmCheckOut(customer: TenantRecord) {
+    if (payments.loading || invoices.loading || settlements.loading || meterReadings.loading) {
+      setActionError(t('Wait for financial records to finish loading, then try checkout again.'));
+      return;
+    }
     if (String(customer.businessType || 'pg') === 'pg') {
       startMeterLifecycle(customer, 'check-out');
       return;
@@ -704,6 +874,16 @@ export function CustomersScreen({
           onClose={() => setPendingMeterLifecycle(null)}
           onSubmit={completeMeterLifecycle}
           saving={checkingInId === pendingMeterLifecycle.customer.id || checkingOutId === pendingMeterLifecycle.customer.id}
+        />
+      ) : null}
+      {pendingSettlement ? (
+        <CheckoutSettlementSheet
+          automaticCharge={settlementPreview.automaticCharge}
+          customer={pendingSettlement.customer}
+          ledgerBalance={settlementPreview.ledgerBalance}
+          onClose={() => setPendingSettlement(null)}
+          onSubmit={finalizeCheckout}
+          saving={savingSettlement}
         />
       ) : null}
 

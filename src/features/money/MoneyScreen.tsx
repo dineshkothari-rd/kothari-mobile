@@ -24,6 +24,7 @@ import { getCustomerAllocationLabel } from '../customers/customerUtils';
 import {
   calculateMonthlyDues,
   calculatePaymentResult,
+  buildDuesCsv,
   getCollectedTotal,
   getMonthDisplay,
   getMonthKey,
@@ -39,7 +40,7 @@ import {
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import { TextField } from '../../shared/components/TextField';
 import { auth, db } from '../../lib/firebase/client';
-import type { DueRecord, MeterReadingRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
+import type { DueRecord, InvoiceRecord, MeterReadingRecord, PaymentRecord, SettlementRecord, TenantRecord } from '../../shared/types/records';
 import { money, toNumber } from '../../shared/utils/money';
 import { ExpenseDesk } from './ExpenseDesk';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
@@ -427,16 +428,19 @@ export function MoneyScreen() {
   const [paymentFormTenantId, setPaymentFormTenantId] = useState('');
   const [paymentFormAmount, setPaymentFormAmount] = useState(0);
   const [savingPayment, setSavingPayment] = useState(false);
+  const [invoiceAction, setInvoiceAction] = useState<'export' | 'generate' | ''>('');
   const [deletingPaymentId, setDeletingPaymentId] = useState('');
   const [actionError, setActionError] = useState('');
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
   const payments = useFirestoreCollection<PaymentRecord>('payments', { sortBy: 'createdAt' });
   const meterReadings = useFirestoreCollection<MeterReadingRecord>('meterReadings', { sortBy: 'createdAt' });
+  const invoices = useFirestoreCollection<InvoiceRecord>('invoices', { sortBy: 'issuedAt' });
+  const settlements = useFirestoreCollection<SettlementRecord>('settlements', { sortBy: 'finalizedAt' });
   const activePayments = useMemo(() => payments.data.filter((payment) => !isVoided(payment)), [payments.data]);
 
   const dues = useMemo(
-    () => calculateMonthlyDues(tenants.data, activePayments, month, meterReadings.data),
-    [activePayments, meterReadings.data, month, tenants.data],
+    () => calculateMonthlyDues(tenants.data, activePayments, month, meterReadings.data, invoices.data),
+    [activePayments, invoices.data, meterReadings.data, month, tenants.data],
   );
   const monthlyPayments = useMemo(
     () => activePayments.filter((payment) => matchesMonth(payment, month, ['paidOn', 'date', 'createdAt', 'updatedAt'])),
@@ -460,8 +464,8 @@ export function MoneyScreen() {
   const duesSummary = useMemo(() => summarizeDues(dues), [dues]);
   const visibleDuesSummary = useMemo(() => summarizeDues(visibleDues), [visibleDues]);
   const collected = useMemo(() => getCollectedTotal(visiblePayments), [visiblePayments]);
-  const loading = tenants.loading || payments.loading || meterReadings.loading;
-  const error = tenants.error || payments.error || meterReadings.error;
+  const loading = tenants.loading || payments.loading || meterReadings.loading || invoices.loading || settlements.loading;
+  const error = tenants.error || payments.error || meterReadings.error || invoices.error || settlements.error;
   const activeFilters = view === 'dues' ? dueFilters : paymentFilters;
   const currentMonth = getMonthKey();
 
@@ -507,6 +511,69 @@ export function MoneyScreen() {
       setActionError(createError instanceof Error ? createError.message : t('Could not record payment.'));
     } finally {
       setSavingPayment(false);
+    }
+  }
+
+  async function generateMonthlyInvoices() {
+    setInvoiceAction('generate');
+    setActionError('');
+
+    try {
+      const actorUid = auth.currentUser?.uid;
+      if (!actorUid) throw new Error(t('Please sign in again.'));
+      const existing = new Set(invoices.data.filter((invoice) => invoice.month === month).map((invoice) => invoice.tenantId));
+      const missing = dues.filter((due) => !existing.has(due.tenantId));
+      if (!missing.length) throw new Error(t('Invoices are already generated for this month.'));
+      if (missing.length > 498) throw new Error(t('Generate invoices in a smaller customer batch.'));
+
+      const batch = writeBatch(db);
+      missing.forEach((due) => {
+        batch.set(doc(db, 'invoices', `${due.tenantId}_${month}`), {
+          baseAmount: due.baseAmount,
+          businessType: due.businessType,
+          issuedAt: serverTimestamp(),
+          issuedBy: actorUid,
+          meterAmount: due.meterAmount,
+          month,
+          status: 'Issued',
+          tenantId: due.tenantId,
+          tenantName: due.tenantName,
+          tenantRoom: due.tenantRoom,
+          total: due.rent,
+        });
+      });
+      batch.set(doc(collection(db, 'auditEvents')), {
+        action: 'invoices.generated',
+        actorUid,
+        createdAt: serverTimestamp(),
+        entityId: month,
+        entityType: 'invoice_batch',
+        month,
+      });
+      await batch.commit();
+      Alert.alert(t('Invoices generated'), `${missing.length} ${t('invoices saved permanently for')} ${month}.`);
+    } catch (invoiceError) {
+      setActionError(invoiceError instanceof Error ? invoiceError.message : t('Could not generate invoices.'));
+    } finally {
+      setInvoiceAction('');
+    }
+  }
+
+  async function exportMonthlyReport() {
+    setInvoiceAction('export');
+    setActionError('');
+
+    try {
+      if (!(await Sharing.isAvailableAsync())) throw new Error(t('Sharing is not available on this device.'));
+      const report = new File(Paths.cache, `kothari-dues-${month}.csv`);
+      if (report.exists) report.delete();
+      report.create();
+      report.write(buildDuesCsv(dues));
+      await Sharing.shareAsync(report.uri, { dialogTitle: t('Export monthly report'), mimeType: 'text/csv' });
+    } catch (exportError) {
+      setActionError(exportError instanceof Error ? exportError.message : t('Could not export report.'));
+    } finally {
+      setInvoiceAction('');
     }
   }
 
@@ -584,6 +651,8 @@ export function MoneyScreen() {
           onClose={() => setShowPaymentForm(false)}
           onSubmit={createPayment}
           payments={activePayments}
+          invoices={invoices.data}
+          settlements={settlements.data}
           readings={meterReadings.data}
           saving={savingPayment}
           styles={styles}
@@ -632,13 +701,19 @@ export function MoneyScreen() {
         </View>
 
         {view === 'expenses' ? null : (
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => openPaymentForm()}
-            style={styles.recordPaymentButton}
-          >
-            <Text style={styles.recordPaymentText}>{t('Record payment')}</Text>
-          </Pressable>
+          <View style={styles.heroActions}>
+            <Pressable accessibilityRole="button" onPress={() => openPaymentForm()} style={styles.recordPaymentButton}>
+              <Text style={styles.recordPaymentText}>{t('Record payment')}</Text>
+            </Pressable>
+            <View style={styles.secondaryActions}>
+              <Pressable disabled={Boolean(invoiceAction)} onPress={generateMonthlyInvoices} style={styles.secondaryAction}>
+                <Text style={styles.secondaryActionText}>{t(invoiceAction === 'generate' ? 'Saving...' : 'Freeze invoices')}</Text>
+              </Pressable>
+              <Pressable disabled={Boolean(invoiceAction)} onPress={exportMonthlyReport} style={styles.secondaryAction}>
+                <Text style={styles.secondaryActionText}>{t(invoiceAction === 'export' ? 'Exporting...' : 'Export CSV')}</Text>
+              </Pressable>
+            </View>
+          </View>
         )}
       </View>
 
@@ -743,6 +818,7 @@ export function MoneyScreen() {
               deleting={deletingPaymentId === payment.id}
               key={payment.id}
               onDelete={() => confirmDeletePayment(payment)}
+              canVoid={!settlements.data.some((item) => item.tenantId === getPaymentTenantId(payment))}
               onDownloadReceipt={() => downloadReceipt(payment)}
               payment={payment}
               styles={styles}
@@ -763,6 +839,8 @@ function PaymentFormSheet({
   onClose,
   onSubmit,
   payments,
+  invoices,
+  settlements,
   readings,
   saving,
   styles,
@@ -774,6 +852,8 @@ function PaymentFormSheet({
   onClose: () => void;
   onSubmit: (payload: PaymentDraft) => void;
   payments: PaymentRecord[];
+  invoices: InvoiceRecord[];
+  settlements: SettlementRecord[];
   readings: MeterReadingRecord[];
   saving: boolean;
   styles: ReturnType<typeof createStyles>;
@@ -787,8 +867,9 @@ function PaymentFormSheet({
   const [formError, setFormError] = useState('');
   const selectedTenantId = tenantId || tenants[0]?.id || '';
   const selectedTenant = tenants.find((tenant) => tenant.id === selectedTenantId);
+  const hasSettlement = settlements.some((settlement) => settlement.tenantId === selectedTenantId);
   const selectedBusinessType = getBusinessType(selectedTenant?.businessType);
-  const selectedDue = calculateMonthlyDues(selectedTenant ? [selectedTenant] : [], payments, paymentMonth, readings)[0];
+  const selectedDue = calculateMonthlyDues(selectedTenant ? [selectedTenant] : [], payments, paymentMonth, readings, invoices)[0];
   const tenantRent = selectedDue?.baseAmount || 0;
   const meterAmount = selectedDue?.meterAmount || 0;
   const totalCharge = selectedDue?.rent || 0;
@@ -817,6 +898,11 @@ function PaymentFormSheet({
 
     if (!selectedTenant) {
       setFormError(t('Select a customer first.'));
+      return;
+    }
+
+    if (hasSettlement) {
+      setFormError(t('Record checkout balance payments in More → Settlements.'));
       return;
     }
 
@@ -1050,6 +1136,7 @@ function DueCard({
 }
 
 function PaymentCard({
+  canVoid,
   deleting,
   onDelete,
   onDownloadReceipt,
@@ -1057,6 +1144,7 @@ function PaymentCard({
   styles,
   tenants,
 }: {
+  canVoid: boolean;
   deleting: boolean;
   onDelete: () => void;
   onDownloadReceipt: () => void;
@@ -1090,9 +1178,9 @@ function PaymentCard({
         <Pressable onPress={onDownloadReceipt} style={[styles.actionButton, styles.actionButtonSurface]}>
           <Text style={styles.actionTextAlt}>{t('Receipt')}</Text>
         </Pressable>
-        <Pressable disabled={deleting} onPress={onDelete} style={[styles.actionButton, styles.deleteInlineButton, deleting && styles.disabledAction]}>
+        {canVoid ? <Pressable disabled={deleting} onPress={onDelete} style={[styles.actionButton, styles.deleteInlineButton, deleting && styles.disabledAction]}>
           <Text style={styles.deleteInlineText}>{t(deleting ? 'Voiding...' : 'Void payment')}</Text>
-        </Pressable>
+        </Pressable> : null}
       </View>
     </View>
   );
@@ -1270,9 +1358,29 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       backgroundColor: colors.surface,
       borderRadius: radius.md,
-      marginTop: spacing.lg,
       minHeight: 48,
       justifyContent: 'center',
+    },
+    heroActions: {
+      gap: spacing.sm,
+      marginTop: spacing.lg,
+    },
+    secondaryActions: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    secondaryAction: {
+      alignItems: 'center',
+      backgroundColor: colors.overlaySubtle,
+      borderRadius: radius.md,
+      flex: 1,
+      minHeight: 44,
+      justifyContent: 'center',
+    },
+    secondaryActionText: {
+      color: colors.panelText,
+      fontSize: 12,
+      fontWeight: typography.weight.black,
     },
     recordPaymentText: {
       color: colors.text,

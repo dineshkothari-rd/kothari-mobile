@@ -5,10 +5,16 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "jsEngine": "hermes",
-    "newArchEnabled": true,
     "userInterfaceStyle": "automatic",
     "plugins": [
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#0F172A"
+        }
+      ],
       [
         "expo-image-picker",
         {
@@ -16,17 +22,18 @@
           "microphonePermission": false,
           "photosPermission": "Allow Kothari to attach customer and meter photos."
         }
-      ]
+      ],
+      "expo-sharing"
     ],
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0F172A"
-    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "config": {
+        "usesNonExemptEncryption": false
+      },
+      "bundleIdentifier": "com.kothari.mobile"
     },
     "android": {
+      "allowBackup": false,
       "package": "com.kothari.mobile",
       "versionCode": 8,
       "adaptiveIcon": {

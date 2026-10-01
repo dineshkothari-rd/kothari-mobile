@@ -8,7 +8,7 @@ import { auth, db } from '../../lib/firebase/client';
 import { TextField } from '../../shared/components/TextField';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import type { CustomerProfile } from '../../shared/types/admin';
-import type { MeterReadingRecord, NoticeRecord, PaymentRecord, SupportRequestRecord, TenantRecord } from '../../shared/types/records';
+import type { InvoiceRecord, MeterReadingRecord, NoticeRecord, PaymentRecord, SettlementRecord, SupportRequestRecord, TenantRecord } from '../../shared/types/records';
 import { money } from '../../shared/utils/money';
 import { getBusinessType } from '../customers/businessTypes';
 import { getCustomerAllocationLabel, getCustomerName, getCustomerStatusGroup, getCustomerStatusLabel } from '../customers/customerUtils';
@@ -20,10 +20,12 @@ type CustomerData = {
   customer: TenantRecord | null;
   error: string;
   loading: boolean;
+  invoices: InvoiceRecord[];
   meterReadings: MeterReadingRecord[];
   notices: NoticeRecord[];
   payments: PaymentRecord[];
   requests: SupportRequestRecord[];
+  settlements: SettlementRecord[];
   refresh: () => void;
   refreshing: boolean;
 };
@@ -33,7 +35,7 @@ export function CustomerWorkspaceScreen({ onSignOut, profile }: { onSignOut: () 
   const { t } = useLanguage();
   const styles = createStyles(colors);
   const insets = useSafeAreaInsets();
-  const { customer, error, loading, meterReadings, notices, payments, refresh, refreshing, requests } = useCustomerData(profile.customerId);
+  const { customer, error, invoices, loading, meterReadings, notices, payments, refresh, refreshing, requests, settlements } = useCustomerData(profile.customerId);
   const [requestType, setRequestType] = useState<'issue' | 'profile_correction'>('issue');
   const [requestMessage, setRequestMessage] = useState('');
   const [requestBusy, setRequestBusy] = useState(false);
@@ -43,13 +45,15 @@ export function CustomerWorkspaceScreen({ onSignOut, profile }: { onSignOut: () 
     () => getMeterReadingCharges(meterReadings, customer?.id || ''),
     [customer?.id, meterReadings],
   );
+  const activeMeterReadings = useMemo(() => meterReadings.filter((reading) => !isVoided(reading)), [meterReadings]);
   const month = getMonthKey();
   const lifecycleGroup = customer ? getCustomerStatusGroup(customer) : 'reserved';
   const hasStarted = lifecycleGroup === 'active' || lifecycleGroup === 'completed';
   const dueBalance = useMemo(
-    () => customer && hasStarted ? calculateOutstandingBalance(customer, payments, meterReadings, month) : 0,
-    [customer, hasStarted, meterReadings, month, payments],
+    () => customer && hasStarted ? calculateOutstandingBalance(customer, payments, meterReadings, month, invoices, settlements) : 0,
+    [customer, hasStarted, invoices, meterReadings, month, payments, settlements],
   );
+  const settlement = settlements[0];
   const business = getBusinessType(customer?.businessType);
 
   async function shareReceipt(payment: PaymentRecord) {
@@ -147,6 +151,7 @@ export function CustomerWorkspaceScreen({ onSignOut, profile }: { onSignOut: () 
               <DetailRow label={t(business.startDateLabel)} styles={styles} value={String(customer.moveInDate || customer.checkInDate || '—')} />
               <DetailRow label={t(business.endDateLabel)} styles={styles} value={String(customer.moveOutDate || customer.checkoutDate || customer.endDate || '—')} />
               <DetailRow label={t('Status')} styles={styles} value={t(getCustomerStatusLabel(customer))} />
+              {settlement ? <DetailRow label={t('Checkout refund')} styles={styles} value={`${money(settlement.refundDue)} · ${t(settlement.refundStatus)}`} /> : null}
             </View>
 
             <View style={styles.sectionHeader}>
@@ -174,10 +179,10 @@ export function CustomerWorkspaceScreen({ onSignOut, profile }: { onSignOut: () 
               <>
                 <View style={styles.sectionHeader}>
                   <Text style={styles.sectionTitle}>{t('Electricity')}</Text>
-                  <Text style={styles.sectionMeta}>{meterReadings.length}</Text>
+                  <Text style={styles.sectionMeta}>{activeMeterReadings.length}</Text>
                 </View>
                 <View style={styles.card}>
-                  {meterReadings.length ? meterReadings.slice(0, 3).map((reading, index) => (
+                  {activeMeterReadings.length ? activeMeterReadings.slice(0, 3).map((reading, index) => (
                     <View key={reading.id} style={[styles.row, index > 0 && styles.rowBorder]}>
                       <View style={styles.rowCopy}>
                         <Text style={styles.rowTitle}>{String(reading.month || t('Meter reading'))}</Text>
@@ -252,9 +257,11 @@ export function CustomerWorkspaceScreen({ onSignOut, profile }: { onSignOut: () 
 function useCustomerData(customerId: string): CustomerData {
   const [customer, setCustomer] = useState<TenantRecord | null>(null);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
   const [notices, setNotices] = useState<NoticeRecord[]>([]);
   const [meterReadings, setMeterReadings] = useState<MeterReadingRecord[]>([]);
   const [requests, setRequests] = useState<SupportRequestRecord[]>([]);
+  const [settlements, setSettlements] = useState<SettlementRecord[]>([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -283,6 +290,13 @@ function useCustomerData(customerId: string): CustomerData {
     const stopPayments = onSnapshot(query(collection(db, 'payments'), where('tenantId', '==', customerId)), (snapshot) => {
       setPayments(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as PaymentRecord)).filter((item) => !isVoided(item)).sort((a, b) => Number(b.createdAt?.seconds || 0) - Number(a.createdAt?.seconds || 0)));
     }, (snapshotError) => setError(snapshotError.message));
+    const stopInvoices = onSnapshot(query(collection(db, 'invoices'), where('tenantId', '==', customerId)), (snapshot) => {
+      setInvoices(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as InvoiceRecord)));
+    }, (snapshotError) => setError(snapshotError.message));
+    const stopSettlements = onSnapshot(query(collection(db, 'settlements'), where('tenantId', '==', customerId)), (snapshot) => {
+      setSettlements(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as SettlementRecord))
+        .sort((a, b) => Number(b.finalizedAt?.seconds || 0) - Number(a.finalizedAt?.seconds || 0)));
+    }, (snapshotError) => setError(snapshotError.message));
     const stopMeterReadings = onSnapshot(query(collection(db, 'meterReadings'), where('tenantId', '==', customerId)), (snapshot) => {
       setMeterReadings(snapshot.docs.map((item) => ({ id: item.id, ...item.data() } as MeterReadingRecord)).sort((a, b) => Number(b.createdAt?.seconds || 0) - Number(a.createdAt?.seconds || 0)));
     }, (snapshotError) => setError(snapshotError.message));
@@ -301,6 +315,8 @@ function useCustomerData(customerId: string): CustomerData {
     return () => {
       stopCustomer();
       stopPayments();
+      stopInvoices();
+      stopSettlements();
       stopMeterReadings();
       stopBroadcastNotices();
       stopDirectNotices();
@@ -308,7 +324,7 @@ function useCustomerData(customerId: string): CustomerData {
     };
   }, [customerId, refreshKey]);
 
-  return { customer, error, loading, meterReadings, notices, payments, refresh, refreshing, requests };
+  return { customer, error, invoices, loading, meterReadings, notices, payments, refresh, refreshing, requests, settlements };
 }
 
 function DetailRow({ label, styles, value }: { label: string; styles: ReturnType<typeof createStyles>; value: string }) {

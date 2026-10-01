@@ -25,12 +25,11 @@ function getAccountAccessStatus(value: unknown, fallback: AccountAccessStatus): 
 export async function getAppProfile(user: User | null): Promise<AppProfile | null> {
   if (!user?.email) return null;
 
-  const token = await user.getIdTokenResult();
   const data = await getDoc(doc(db, 'users', user.uid)).then((snapshot) => snapshot.data()).catch(() => undefined);
-  const role = isAppRole(token.claims.role) ? token.claims.role : isAppRole(data?.role) ? data.role : null;
+  const role = isAppRole(data?.role) ? data.role : null;
 
   if (role) {
-    const customerId = String(data?.customerId || token.claims.customerId || '').trim();
+    const customerId = String(data?.customerId || '').trim();
 
     const base = {
       email: user.email,
@@ -42,8 +41,6 @@ export async function getAppProfile(user: User | null): Promise<AppProfile | nul
     if (role === 'customer') {
       return customerId ? { ...base, accessStatus: getAccountAccessStatus(data?.accessStatus, 'invited'), customerId, role } : null;
     }
-
-    if (role === 'staff' && !data) return null;
 
     return { ...base, accessStatus: getAccountAccessStatus(data?.accessStatus, 'active'), role };
   }

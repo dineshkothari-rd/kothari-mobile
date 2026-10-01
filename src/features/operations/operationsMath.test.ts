@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 // @ts-expect-error Node runs this check with native TypeScript stripping.
-import { calculateMonthlyDues, calculateOutstandingBalance, calculatePaymentResult, getDailyStayActions, getMeterChargeForMonth, getMeterReadingCandidates, getMeterReadingCharges, getRemainingPaymentBalance } from './operationsMath.ts';
+import { buildDuesCsv, calculateMonthlyDues, calculateOutstandingBalance, calculatePaymentResult, calculateSettlement, getDailyStayActions, getMeterChargeForMonth, getMeterReadingCandidates, getMeterReadingCharges, getRemainingPaymentBalance } from './operationsMath.ts';
 
 test('reservation to checkout keeps an accurate customer ledger', () => {
   const reservation = { id: 'tenant-1', businessType: 'pg', moveInDate: '2026-08-10', rent: 3000, status: 'booked' };
@@ -42,6 +42,47 @@ test('second partial payment closes the balance used on its receipt', () => {
   assert.equal(getRemainingPaymentBalance(1000, previous, 'tenant-1', '2026-08'), 500);
 });
 
+test('issued invoices freeze historical charges and export safely', () => {
+  const tenant = { id: 'tenant-1', name: 'Kumar, Dinesh', rent: 9000, status: 'active' };
+  const invoices = [{
+    id: 'tenant-1_2026-08', baseAmount: 3000, businessType: 'pg', issuedBy: 'admin', meterAmount: 400,
+    month: '2026-08', status: 'Issued' as const, tenantId: 'tenant-1', tenantName: 'Kumar, Dinesh', tenantRoom: '101', total: 3400,
+  }];
+  const due = calculateMonthlyDues([tenant], [], '2026-08', [], invoices)[0];
+
+  assert.equal(due.rent, 3400);
+  assert.match(buildDuesCsv([due]), /"Kumar, Dinesh"/);
+});
+
+test('checkout settlement applies deposit, discount, payment and refund exactly once', () => {
+  assert.deepEqual(calculateSettlement({
+    depositHeld: 5000,
+    discount: 500,
+    extraCharge: 1000,
+    ledgerBalance: 3000,
+    paymentReceived: 0,
+  }), {
+    depositApplied: 3500,
+    finalBalance: 0,
+    grossDue: 3500,
+    paymentReceived: 0,
+    refundDue: 1500,
+  });
+
+  const tenant = { id: 'tenant-1', moveInDate: '2026-09-01', moveOutDate: '2026-09-21', rent: 3000, status: 'checked out' };
+  const payments = [
+    { id: 'before', amountPaid: 1000, month: '2026-09', tenantId: 'tenant-1' },
+    { id: 'after', amountPaid: 200, month: '2026-09', tenantId: 'tenant-1' },
+  ];
+  const settlement = [{
+    id: 'tenant-1', depositApplied: 0, depositHeld: 0, discount: 0, extraCharge: 0,
+    finalBalance: 500, finalizedBy: 'admin', grossDue: 500, ledgerBalance: 500,
+    month: '2026-09', paidAtSettlement: 1000, paymentReceived: 0, refundDue: 0,
+    refundStatus: 'None' as const, status: 'Final' as const, tenantId: 'tenant-1', tenantName: 'Customer',
+  }];
+  assert.equal(calculateOutstandingBalance(tenant, payments, [], '2026-09', [], settlement), 300);
+});
+
 test('overlapping checkout reading does not bill consumed units twice', () => {
   const readings = [
     { id: 'check-in', currentReading: 100, month: '2026-08', previousReading: 100, ratePerUnit: 10, tenantId: 'tenant-1', unitsConsumed: 0 },
@@ -51,6 +92,17 @@ test('overlapping checkout reading does not bill consumed units twice', () => {
 
   assert.equal(getMeterChargeForMonth(readings, 'tenant-1', '2026-08'), 500);
   assert.equal(getMeterChargeForMonth(readings, 'tenant-1', '2026-09'), 500);
+});
+
+test('voided meter readings stay in history without affecting bills', () => {
+  const readings = [
+    { id: 'baseline', currentReading: 100, month: '2026-08', previousReading: 100, ratePerUnit: 10, tenantId: 'tenant-1' },
+    { id: 'mistake', currentReading: 500, month: '2026-08', previousReading: 100, ratePerUnit: 10, status: 'Voided', tenantId: 'tenant-1' },
+    { id: 'correct', currentReading: 150, month: '2026-08', previousReading: 100, ratePerUnit: 10, tenantId: 'tenant-1' },
+  ];
+
+  assert.equal(getMeterChargeForMonth(readings, 'tenant-1', '2026-08'), 500);
+  assert.equal(getMeterReadingCharges(readings, 'tenant-1').mistake, undefined);
 });
 
 test('first absolute meter reading is a baseline, not consumed units', () => {
