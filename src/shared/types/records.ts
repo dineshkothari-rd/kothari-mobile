@@ -4,6 +4,12 @@ export type FirestoreRecord = {
 };
 
 export type TenantRecord = FirestoreRecord & {
+  archived?: boolean;
+  archivedAt?: {
+    seconds?: number;
+    toDate?: () => Date;
+  };
+  archivedBy?: string;
   additionalGuests?: string[];
   businessType?: string;
   documentId?: string;
@@ -82,6 +88,63 @@ export type PaymentRecord = FirestoreRecord & {
   voidedBy?: string;
 };
 
+export type InvoiceRecord = FirestoreRecord & {
+  baseAmount: number;
+  businessType: string;
+  issuedAt?: {
+    seconds?: number;
+    toDate?: () => Date;
+  };
+  issuedBy: string;
+  meterAmount: number;
+  month: string;
+  status: 'Issued';
+  tenantId: string;
+  tenantName: string;
+  tenantRoom: string;
+  total: number;
+};
+
+export type AuditEventRecord = FirestoreRecord & {
+  action?: string;
+  actorUid?: string;
+  createdAt?: {
+    seconds?: number;
+    toDate?: () => Date;
+  };
+  entityId?: string;
+  entityType?: string;
+  month?: string;
+};
+
+export type SettlementRecord = FirestoreRecord & {
+  depositApplied: number;
+  depositHeld: number;
+  discount: number;
+  extraCharge: number;
+  finalBalance: number;
+  finalizedAt?: {
+    seconds?: number;
+    toDate?: () => Date;
+  };
+  finalizedBy: string;
+  grossDue: number;
+  ledgerBalance: number;
+  month: string;
+  paidAtSettlement: number;
+  paymentReceived: number;
+  refundDue: number;
+  refundStatus: 'Due' | 'None' | 'Paid';
+  refundedAt?: {
+    seconds?: number;
+    toDate?: () => Date;
+  };
+  refundedBy?: string;
+  status: 'Final';
+  tenantId: string;
+  tenantName: string;
+};
+
 export type ExpenseRecord = FirestoreRecord & {
   amount?: number | string;
   category?: string;
@@ -157,12 +220,17 @@ export type MeterReadingRecord = FirestoreRecord & {
     seconds?: number;
     toDate?: () => Date;
   };
+  status?: string;
+  voidedAt?: { seconds?: number; toDate?: () => Date };
+  voidedBy?: string;
 };
 
 export type DueRecord = {
+  baseAmount: number;
   balance: number;
   businessType: string;
   id: string;
+  meterAmount: number;
   month: string;
   paid: number;
   phone: string;

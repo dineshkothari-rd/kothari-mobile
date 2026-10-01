@@ -12,11 +12,11 @@ import {
   Text,
   View,
 } from 'react-native';
-import { addDoc, collection, deleteDoc, doc, getDocs, limit, orderBy, query, serverTimestamp, where, writeBatch } from 'firebase/firestore';
+import { collection, doc, runTransaction, serverTimestamp, writeBatch } from 'firebase/firestore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
-import { db } from '../../lib/firebase/client';
+import { auth, db } from '../../lib/firebase/client';
 import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import { useRealtimeClock } from '../../shared/hooks/useRealtimeClock';
@@ -26,7 +26,8 @@ import { FilterPill } from '../customers/FilterPill';
 import { getCustomerAllocationLabel, getCustomerStatus } from '../customers/customerUtils';
 import { isRoomCustomer } from '../customers/roomUtils';
 import { LifecycleMeterSheet, type LifecycleMeterResult } from '../customers/LifecycleMeterSheet';
-import { getMonthKey } from '../operations/operationsMath';
+import { syncAllocationGuard } from '../customers/allocationTransactions';
+import { getMeterReadingCharges, getMonthKey, isVoided, meterReadingNeedsReview } from '../operations/operationsMath';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
 const RATE_PER_UNIT = 10;
@@ -68,14 +69,6 @@ function matchesSearch(reading: MeterReadingRecord, search: string) {
   );
 }
 
-function getUnitsTotal(readings: MeterReadingRecord[]) {
-  return readings.reduce((sum, reading) => sum + toNumber(reading.unitsConsumed), 0);
-}
-
-function getBillTotal(readings: MeterReadingRecord[]) {
-  return readings.reduce((sum, reading) => sum + toNumber(reading.billAmount), 0);
-}
-
 function formatLocalDate(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
@@ -83,7 +76,7 @@ function formatLocalDate(date: Date) {
 export function MeterScreen() {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
-  const styles = createStyles(colors);
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [search, setSearch] = useState('');
   const [tenantFilter, setTenantFilter] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -96,16 +89,28 @@ export function MeterScreen() {
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
   const readings = useFirestoreCollection<MeterReadingRecord>('meterReadings', { sortBy: 'createdAt' });
   const meterCustomers = useMemo(() => tenants.data.filter((tenant) => isMeterCustomer(tenant, now)), [now, tenants.data]);
+  const meterFormCustomers = useMemo(
+    () => tenants.data.filter((tenant) => String(tenant.businessType || 'pg') === 'pg' && Boolean(tenant.room)),
+    [tenants.data],
+  );
   const filtered = useMemo(
     () =>
       readings.data.filter((reading) => {
+        if (isVoided(reading)) return false;
         const tenantMatches = tenantFilter ? reading.tenantId === tenantFilter : true;
         return tenantMatches && matchesSearch(reading, search);
       }),
     [readings.data, search, tenantFilter],
   );
-  const totalUnits = getUnitsTotal(filtered);
-  const totalBill = getBillTotal(filtered);
+  const readingCharges = useMemo(() => {
+    const charges: ReturnType<typeof getMeterReadingCharges> = {};
+    const tenantIds = new Set(readings.data.map((reading) => reading.tenantId).filter(Boolean) as string[]);
+
+    tenantIds.forEach((id) => Object.assign(charges, getMeterReadingCharges(readings.data, id)));
+    return charges;
+  }, [readings.data]);
+  const totalUnits = useMemo(() => filtered.reduce((sum, reading) => sum + (readingCharges[reading.id]?.units || 0), 0), [filtered, readingCharges]);
+  const totalBill = useMemo(() => filtered.reduce((sum, reading) => sum + (readingCharges[reading.id]?.amount || 0), 0), [filtered, readingCharges]);
   const loading = tenants.loading || readings.loading;
   const error = tenants.error || readings.error;
   const lifecycleCustomers = useMemo(
@@ -128,10 +133,16 @@ export function MeterScreen() {
     setActionError('');
 
     try {
-      await addDoc(collection(db, 'meterReadings'), {
+      const actorUid = auth.currentUser?.uid;
+      if (!actorUid) throw new Error(t('Please sign in again.'));
+      const batch = writeBatch(db);
+      const readingRef = doc(collection(db, 'meterReadings'));
+      batch.set(readingRef, {
         ...payload,
         createdAt: serverTimestamp(),
       });
+      batch.set(doc(collection(db, 'auditEvents')), { action: 'meter.created', actorUid, createdAt: serverTimestamp(), entityId: readingRef.id, entityType: 'meterReading' });
+      await batch.commit();
       setShowForm(false);
     } catch (createError) {
       setActionError(createError instanceof Error ? createError.message : t('Could not save meter reading.'));
@@ -140,41 +151,45 @@ export function MeterScreen() {
     }
   }
 
-  async function deleteReading(readingId: string) {
+  async function voidReading(readingId: string) {
     setDeletingId(readingId);
     setActionError('');
 
     try {
-      await deleteDoc(doc(db, 'meterReadings', readingId));
+      const actorUid = auth.currentUser?.uid;
+      if (!actorUid) throw new Error(t('Please sign in again.'));
+      const batch = writeBatch(db);
+      batch.update(doc(db, 'meterReadings', readingId), { status: 'Voided', voidedAt: serverTimestamp(), voidedBy: actorUid });
+      batch.set(doc(collection(db, 'auditEvents')), { action: 'meter.voided', actorUid, createdAt: serverTimestamp(), entityId: readingId, entityType: 'meterReading' });
+      await batch.commit();
     } catch (deleteError) {
-      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete meter reading.'));
+      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not void meter reading.'));
     } finally {
       setDeletingId('');
     }
   }
 
   function confirmDelete(reading: MeterReadingRecord) {
-    Alert.alert(t('Delete reading?'), `${t('Delete reading for')} ${reading.tenantName || t('this customer')}? ${t('This cannot be undone.')}`, [
+    Alert.alert(t('Void reading?'), `${t('Void reading for')} ${reading.tenantName || t('this customer')}? ${t('The original record will remain in the audit trail.')}`, [
       { text: t('Cancel'), style: 'cancel' },
-      { text: t('Delete'), style: 'destructive', onPress: () => deleteReading(reading.id) },
+      { text: t('Void'), style: 'destructive', onPress: () => voidReading(reading.id) },
     ]);
   }
 
   function latestRoomReading(customer: TenantRecord) {
-    const customerReading = readings.data.find((reading) => reading.tenantId === customer.id);
-    const roomReading = readings.data.find((reading) => reading.tenantRoom === customer.room);
+    const validReadings = readings.data.filter((reading) => !meterReadingNeedsReview(readings.data, reading));
+    const customerReading = validReadings.find((reading) => reading.tenantId === customer.id);
+    const roomReading = validReadings.find((reading) => reading.tenantRoom === customer.room);
     return toNumber(customerReading?.currentReading ?? roomReading?.currentReading);
   }
 
   function openLifecycle(customer: TenantRecord) {
     const action = getCustomerStatus(customer) === 'booked' ? 'check-in' : 'check-out';
-    const checkInReading = toNumber(customer.checkInMeterReading)
-      || toNumber(readings.data.find((reading) => reading.tenantId === customer.id && reading.readingType === 'check-in')?.currentReading);
     setActionError('');
     setPendingLifecycle({
       action,
       customer,
-      minimumReading: action === 'check-out' ? checkInReading || latestRoomReading(customer) : latestRoomReading(customer),
+      minimumReading: latestRoomReading(customer),
     });
   }
 
@@ -187,30 +202,12 @@ export function MeterScreen() {
     setActionError('');
 
     try {
+      const actorUid = auth.currentUser?.uid;
+      if (!actorUid) throw new Error(t('Please sign in again.'));
       const eventTime = new Date();
       const readingRef = doc(collection(db, 'meterReadings'));
-      const batch = writeBatch(db);
       const unitsConsumed = checkingIn ? 0 : Math.max(0, result.reading - minimumReading);
-
-      batch.set(readingRef, {
-        billAmount: unitsConsumed * RATE_PER_UNIT,
-        createdAt: serverTimestamp(),
-        currentReading: result.reading,
-        month: `${eventTime.getFullYear()}-${String(eventTime.getMonth() + 1).padStart(2, '0')}`,
-        note: checkingIn ? 'Check-in meter photo' : 'Check-out meter photo',
-        ocrText: result.ocrText,
-        photo: result.photo,
-        photoSize: result.photoSize,
-        previousReading: minimumReading,
-        ratePerUnit: RATE_PER_UNIT,
-        readingSource: 'ocr-locked',
-        readingType: action,
-        tenantId: customer.id,
-        tenantName: getTenantName(customer),
-        tenantRoom: customer.room || '',
-        unitsConsumed,
-      });
-      batch.update(doc(db, 'tenants', customer.id), checkingIn ? {
+      const tenantUpdate = checkingIn ? {
         checkedInAt: serverTimestamp(),
         checkInMeterReading: result.reading,
         checkInMeterReadingId: readingRef.id,
@@ -226,9 +223,37 @@ export function MeterScreen() {
         moveOutTime: eventTime.toTimeString().slice(0, 5),
         status: 'checked out',
         updatedAt: serverTimestamp(),
+      };
+      const nextCustomer = { ...customer, ...tenantUpdate, status: checkingIn ? 'checked in' : 'checked out' } as TenantRecord;
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customer.id, customer, nextCustomer, tenants.data);
+        transaction.set(readingRef, {
+          billAmount: unitsConsumed * RATE_PER_UNIT,
+          createdAt: serverTimestamp(),
+          currentReading: result.reading,
+          month: `${eventTime.getFullYear()}-${String(eventTime.getMonth() + 1).padStart(2, '0')}`,
+          note: checkingIn ? 'Check-in meter photo' : 'Check-out meter photo',
+          ocrText: result.ocrText,
+          photo: result.photo,
+          photoSize: result.photoSize,
+          previousReading: minimumReading,
+          ratePerUnit: RATE_PER_UNIT,
+          readingSource: `ocr-confirmed-${result.photoSource}`,
+          readingType: action,
+          tenantId: customer.id,
+          tenantName: getTenantName(customer),
+          tenantRoom: customer.room || '',
+          unitsConsumed,
+        });
+        transaction.update(doc(db, 'tenants', customer.id), tenantUpdate);
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
+          actorUid,
+          createdAt: serverTimestamp(),
+          customerId: customer.id,
+          customerName: getTenantName(customer),
+        });
       });
-
-      await batch.commit();
       setPendingLifecycle(null);
     } catch (lifecycleError) {
       setActionError(lifecycleError instanceof Error ? lifecycleError.message : t('Could not save meter lifecycle.'));
@@ -251,7 +276,7 @@ export function MeterScreen() {
         />
       ) : null}
       {showForm ? (
-        <MeterFormSheet onClose={() => setShowForm(false)} onSubmit={createReading} saving={saving} styles={styles} tenants={meterCustomers} />
+        <MeterFormSheet onClose={() => setShowForm(false)} onSubmit={createReading} readings={readings.data} saving={saving} styles={styles} tenants={meterFormCustomers} />
       ) : null}
 
       <View style={styles.hero}>
@@ -326,6 +351,7 @@ export function MeterScreen() {
             onDelete={() => confirmDelete(reading)}
             onViewPhoto={() => setViewingPhoto(reading)}
             reading={reading}
+            readingCharge={readingCharges[reading.id]}
             styles={styles}
           />
         ))
@@ -345,12 +371,14 @@ export function MeterScreen() {
 function MeterFormSheet({
   onClose,
   onSubmit,
+  readings,
   saving,
   styles,
   tenants,
 }: {
   onClose: () => void;
   onSubmit: (payload: MeterDraft) => void;
+  readings: MeterReadingRecord[];
   saving: boolean;
   styles: ReturnType<typeof createStyles>;
   tenants: TenantRecord[];
@@ -359,41 +387,20 @@ function MeterFormSheet({
   const [tenantId, setTenantId] = useState(tenants[0]?.id || '');
   const [month, setMonth] = useState(getMonthKey());
   const [currentReading, setCurrentReading] = useState('');
-  const [previousReading, setPreviousReading] = useState<number | null>(null);
   const [note, setNote] = useState('');
-  const [loadingPrevious, setLoadingPrevious] = useState(false);
   const [formError, setFormError] = useState('');
   const selectedTenant = tenants.find((tenant) => tenant.id === tenantId);
+  const latestReading = readings.find((reading) => reading.tenantId === tenantId);
+  const previousReading = latestReading ? toNumber(latestReading.currentReading) : null;
   const current = toNumber(currentReading);
-  const previous = previousReading ?? 0;
+  const previous = previousReading ?? current;
   const unitsConsumed = previousReading === null ? 0 : Math.max(0, current - previous);
   const billAmount = unitsConsumed * RATE_PER_UNIT;
 
-  async function loadPrevious(nextTenantId: string) {
+  function selectTenant(nextTenantId: string) {
     setTenantId(nextTenantId);
     setCurrentReading('');
-    setPreviousReading(null);
     setFormError('');
-
-    if (!nextTenantId) return;
-
-    setLoadingPrevious(true);
-
-    try {
-      const readingQuery = query(
-        collection(db, 'meterReadings'),
-        where('tenantId', '==', nextTenantId),
-        orderBy('createdAt', 'desc'),
-        limit(1),
-      );
-      const snap = await getDocs(readingQuery);
-      setPreviousReading(snap.empty ? 0 : toNumber(snap.docs[0].data().currentReading));
-    } catch (readError) {
-      setPreviousReading(0);
-      setFormError(readError instanceof Error ? readError.message : t('Could not load previous reading.'));
-    } finally {
-      setLoadingPrevious(false);
-    }
   }
 
   function submit() {
@@ -452,7 +459,7 @@ function MeterFormSheet({
                     active={tenantId === tenant.id}
                     key={tenant.id}
                     label={`${getTenantName(tenant)} / ${getCustomerAllocationLabel(tenant)}`}
-                    onPress={() => loadPrevious(tenant.id)}
+                    onPress={() => selectTenant(tenant.id)}
                   />
                 ))}
               </ScrollView>
@@ -466,7 +473,7 @@ function MeterFormSheet({
             </View>
 
             <View style={styles.readingSummary}>
-              <MeterMini label={t('Previous')} styles={styles} value={loadingPrevious ? t('Loading') : String(previous)} />
+              <MeterMini label={t('Previous')} styles={styles} value={previousReading === null ? t('Baseline') : String(previous)} />
               <MeterMini label={t('Current')} styles={styles} value={String(current)} />
               <MeterMini label={t('Units')} styles={styles} value={String(unitsConsumed)} />
               <MeterMini label={t('Bill')} styles={styles} value={money(billAmount)} />
@@ -494,12 +501,14 @@ function MeterCard({
   onDelete,
   onViewPhoto,
   reading,
+  readingCharge,
   styles,
 }: {
   deleting: boolean;
   onDelete: () => void;
   onViewPhoto: () => void;
   reading: MeterReadingRecord;
+  readingCharge?: { amount: number; needsReview?: boolean; units: number };
   styles: ReturnType<typeof createStyles>;
 }) {
   const { t } = useLanguage();
@@ -513,13 +522,17 @@ function MeterCard({
             {reading.tenantRoom ? ` / ${reading.tenantRoom}` : ''}
           </Text>
         </View>
-        <Text style={styles.billText}>{money(reading.billAmount)}</Text>
+        <Text style={styles.billText}>{money(readingCharge?.amount)}</Text>
       </View>
 
       <View style={styles.grid}>
         <MeterMini label={t('Previous')} styles={styles} value={String(toNumber(reading.previousReading))} />
         <MeterMini label={t('Current')} styles={styles} value={String(toNumber(reading.currentReading))} />
       </View>
+
+      {readingCharge?.needsReview ? (
+        <Text style={styles.errorText}>{t('This reading looks incorrect. Void it and add the correct reading.')}</Text>
+      ) : null}
 
       {reading.photo ? (
         <View style={styles.photoSection}>
@@ -533,13 +546,13 @@ function MeterCard({
         </View>
       ) : null}
       <View style={styles.grid}>
-        <MeterMini label={t('Units')} styles={styles} value={String(toNumber(reading.unitsConsumed))} />
+        <MeterMini label={t('Units')} styles={styles} value={String(readingCharge?.units || 0)} />
         <MeterMini label={t('Rate')} styles={styles} value={money(reading.ratePerUnit)} />
       </View>
 
       {reading.note ? <Text style={styles.note}>{String(reading.note)}</Text> : null}
       <Pressable disabled={deleting} onPress={onDelete} style={[styles.deleteButton, deleting && styles.disabled]}>
-        <Text style={styles.deleteText}>{t(deleting ? 'Deleting...' : 'Delete reading')}</Text>
+        <Text style={styles.deleteText}>{t(deleting ? 'Voiding...' : 'Void reading')}</Text>
       </Pressable>
     </View>
   );

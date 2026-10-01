@@ -51,3 +51,9 @@ export function getCustomerAllocationLabel(customer: Pick<TenantRecord, 'busines
     ? allocation
     : `${businessType.unitLabel} ${allocation}`;
 }
+
+export function maskDocumentId(value?: string) {
+  const documentId = String(value || '').trim();
+  if (!documentId) return '-';
+  return documentId.length <= 4 ? '••••' : `•••• ${documentId.slice(-4)}`;
+}

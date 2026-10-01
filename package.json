@@ -5,38 +5,49 @@
   "dependencies": {
     "@infinitered/react-native-mlkit-text-recognition": "^5.0.1",
     "@react-native-async-storage/async-storage": "^2.2.0",
-    "expo": "~54.0.37",
-    "expo-crypto": "~15.0.9",
-    "expo-file-system": "~19.0.24",
-    "expo-image": "~3.0.11",
-    "expo-image-manipulator": "~14.0.8",
-    "expo-image-picker": "~17.0.11",
-    "expo-navigation-bar": "~5.0.10",
-    "expo-print": "~15.0.8",
-    "expo-sharing": "~14.0.8",
-    "expo-status-bar": "~3.0.9",
-    "expo-system-ui": "~6.0.9",
+    "expo": "~57.0.26",
+    "expo-crypto": "~57.0.3",
+    "expo-file-system": "~57.0.7",
+    "expo-image": "~57.0.5",
+    "expo-image-manipulator": "~57.0.20",
+    "expo-image-picker": "~57.0.20",
+    "expo-navigation-bar": "~57.0.3",
+    "expo-print": "~57.0.2",
+    "expo-screen-capture": "~57.0.3",
+    "expo-secure-store": "~57.0.4",
+    "expo-sharing": "~57.0.22",
+    "expo-splash-screen": "~57.0.9",
+    "expo-status-bar": "~57.0.1",
+    "expo-system-ui": "~57.0.4",
     "firebase": "^12.17.1",
-    "react": "19.1.0",
-    "react-native": "0.81.5",
-    "react-native-safe-area-context": "~5.6.0"
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.3",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-web": "~0.21.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",
-    "@types/react": "~19.1.0",
-    "typescript": "~5.9.2"
+    "@firebase/rules-unit-testing": "^5.0.2",
+    "@types/node": "^24.0.0",
+    "@types/react": "~19.2.4",
+    "tsx": "^4.23.12",
+    "typescript": "~6.0.3"
   },
   "scripts": {
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
+    "test": "tsx --test src/features/customer/customerNotices.test.ts src/features/customers/customerLifecycle.test.ts src/features/customers/customerUtils.test.ts src/features/customers/roomUtils.test.ts src/features/operations/operationsMath.test.ts",
+    "test:rules": "npx firebase-tools@14 emulators:exec --only firestore \"node --test firestore.rules.test.mjs\"",
     "web": "expo start --web"
   },
   "engines": {
-    "node": ">=20.19.0"
+    "node": ">=22.13.0"
   },
   "overrides": {
-    "expo-image": "$expo-image"
+    "expo-image": "$expo-image",
+    "uuid": "^11.1.1"
   },
   "private": true
 }

@@ -17,7 +17,7 @@ import * as ImagePicker from 'expo-image-picker';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
 import * as Crypto from 'expo-crypto';
 import { createUserWithEmailAndPassword, deleteUser, sendPasswordResetEmail, signOut, type User } from 'firebase/auth';
-import { addDoc, collection, doc, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import { collection, doc, runTransaction, serverTimestamp, updateDoc, writeBatch } from 'firebase/firestore';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { radius, shadow, spacing, typography, useAppTheme, type AppColors } from '../../design/tokens';
@@ -25,7 +25,7 @@ import { auth, db, getProvisioningAuth } from '../../lib/firebase/client';
 import { TextField } from '../../shared/components/TextField';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import { useRealtimeClock } from '../../shared/hooks/useRealtimeClock';
-import type { MeterReadingRecord, TenantRecord } from '../../shared/types/records';
+import type { InvoiceRecord, MeterReadingRecord, PaymentRecord, SettlementRecord, TenantRecord } from '../../shared/types/records';
 import { toNumber } from '../../shared/utils/money';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import { businessTypeOptions, getBusinessType } from './businessTypes';
@@ -34,7 +34,10 @@ import { CustomerCard } from './CustomerCard';
 import { customerStatusOptions, getCustomerName, getCustomerStatus, getCustomerStatusGroup, matchesCustomerSearch } from './customerUtils';
 import { FilterPill } from './FilterPill';
 import { LifecycleMeterSheet, type LifecycleMeterResult } from './LifecycleMeterSheet';
-import { getRoomOccupancy, getRoomSummary, isRoomCustomer, parseRoomLabel, roomNumbers } from './roomUtils';
+import { getAllocationKey, getRoomOccupancy, getRoomSummary, normalizeLibrarySeat, parseRoomLabel, roomNumbers, staysOverlap } from './roomUtils';
+import { calculateOutstandingBalance, calculateSettlement, getCollectedTotal, getDayKey, getMeterChargeForMonth, getMonthKey, matchesDailyStayAction, meterReadingNeedsReview } from '../operations/operationsMath';
+import { syncAllocationGuard } from './allocationTransactions';
+import { CheckoutSettlementSheet, type CheckoutSettlementDraft } from './CheckoutSettlementSheet';
 
 type CustomerDraft = {
   additionalGuests: string[];
@@ -68,6 +71,12 @@ type CustomerDraft = {
 type PendingMeterLifecycle = {
   action: 'check-in' | 'check-out';
   customer: TenantRecord;
+  minimumReading: number;
+};
+
+type PendingSettlement = {
+  customer: TenantRecord;
+  meterResult?: LifecycleMeterResult;
   minimumReading: number;
 };
 
@@ -147,17 +156,32 @@ function needsCustomerAttention(customer: TenantRecord) {
     || !customer.idProof;
 }
 
-export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
+export function CustomersScreen({
+  initialActionFilter = '',
+  initialMode = 'All',
+  initialStatusFilter = '',
+  isAdmin,
+}: {
+  initialActionFilter?: string;
+  initialMode?: string;
+  initialStatusFilter?: string;
+  isAdmin: boolean;
+}) {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
-  const styles = createStyles(colors);
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
   const meterReadings = useFirestoreCollection<MeterReadingRecord>('meterReadings', { sortBy: 'createdAt' });
+  const invoices = useFirestoreCollection<InvoiceRecord>('invoices', { sortBy: 'issuedAt' });
+  const payments = useFirestoreCollection<PaymentRecord>('payments', { sortBy: 'createdAt' });
+  const settlements = useFirestoreCollection<SettlementRecord>('settlements', { sortBy: 'finalizedAt' });
   const now = useRealtimeClock();
+  const today = getDayKey(new Date(now));
   const [search, setSearch] = useState('');
+  const [actionFilter, setActionFilter] = useState(initialActionFilter);
   const [typeFilter, setTypeFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [mode, setMode] = useState('All');
+  const [statusFilter, setStatusFilter] = useState(initialStatusFilter);
+  const [mode, setMode] = useState(initialMode);
   const [selectedRoom, setSelectedRoom] = useState('');
   const [selectedCustomerId, setSelectedCustomerId] = useState('');
   const [editingCustomer, setEditingCustomer] = useState<TenantRecord | null>(null);
@@ -172,8 +196,47 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
   const [actionError, setActionError] = useState('');
   const [viewingProof, setViewingProof] = useState<TenantRecord | null>(null);
   const [pendingMeterLifecycle, setPendingMeterLifecycle] = useState<PendingMeterLifecycle | null>(null);
-  const roomSummary = getRoomSummary(tenants.data, now);
-  const roomOccupancy = getRoomOccupancy(tenants.data, now);
+  const [pendingSettlement, setPendingSettlement] = useState<PendingSettlement | null>(null);
+  const [savingSettlement, setSavingSettlement] = useState(false);
+  const settlementPreview = useMemo(() => {
+    if (!pendingSettlement) return { automaticCharge: 0, ledgerBalance: 0, month: getMonthKey() };
+
+    const month = getMonthKey(new Date(now));
+    const units = pendingSettlement.meterResult
+      ? Math.max(0, pendingSettlement.meterResult.reading - pendingSettlement.minimumReading)
+      : 0;
+    const meterCharge = units * 10;
+    const previewReadings = pendingSettlement.meterResult ? [...meterReadings.data, {
+      id: 'checkout-preview',
+      billAmount: meterCharge,
+      currentReading: pendingSettlement.meterResult.reading,
+      month,
+      previousReading: pendingSettlement.minimumReading,
+      ratePerUnit: 10,
+      readingType: 'check-out' as const,
+      tenantId: pendingSettlement.customer.id,
+      unitsConsumed: units,
+    }] : meterReadings.data;
+    const currentInvoice = invoices.data.find((invoice) =>
+      invoice.tenantId === pendingSettlement.customer.id && invoice.month === month);
+
+    return {
+      automaticCharge: currentInvoice
+        ? Math.max(0, getMeterChargeForMonth(previewReadings, pendingSettlement.customer.id, month) - currentInvoice.meterAmount)
+        : 0,
+      ledgerBalance: calculateOutstandingBalance(
+        pendingSettlement.customer,
+        payments.data,
+        previewReadings,
+        month,
+        invoices.data,
+        settlements.data,
+      ),
+      month,
+    };
+  }, [invoices.data, meterReadings.data, now, payments.data, pendingSettlement, settlements.data]);
+  const roomSummary = useMemo(() => getRoomSummary(tenants.data, now), [now, tenants.data]);
+  const roomOccupancy = useMemo(() => getRoomOccupancy(tenants.data, now), [now, tenants.data]);
   const filtered = useMemo(
     () =>
       tenants.data.filter((tenant) => {
@@ -182,14 +245,16 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
         const roomMode = mode === 'Rooms' ? ['pg', 'hotel'].includes(String(tenant.businessType || 'pg')) && Boolean(tenant.room) : true;
         const roomMatches = selectedRoom ? parseRoomLabel(tenant.room).room === selectedRoom : true;
         const needsAttention = mode === 'Needs attention' ? needsCustomerAttention(tenant) : true;
+        const matchesAction = actionFilter ? matchesDailyStayAction(tenant, actionFilter, today) : true;
 
-        return typeMatches && statusMatches && roomMode && roomMatches && needsAttention && matchesCustomerSearch(tenant, search);
+        return typeMatches && statusMatches && roomMode && roomMatches && needsAttention && matchesAction && matchesCustomerSearch(tenant, search);
       }),
-    [mode, search, selectedRoom, statusFilter, tenants.data, typeFilter],
+    [actionFilter, mode, search, selectedRoom, statusFilter, tenants.data, today, typeFilter],
   );
 
   function updateMode(nextMode: string) {
     setMode(nextMode);
+    setActionFilter('');
     if (nextMode !== 'Rooms') setSelectedRoom('');
   }
 
@@ -211,12 +276,12 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
     const savedPayload = requiresInitialMeter ? { ...payload, status: 'booked' } : payload;
     const leavingCheckedInState = ['active', 'checked in', 'occupied'].includes(previousStatus) && payload.status !== previousStatus;
     const isMeterLifecycleTransition = editingCustomer
-      && String(editingCustomer.businessType || 'pg') === 'pg'
+      && ['pg', 'hotel'].includes(String(editingCustomer.businessType || 'pg'))
       && payload.status !== previousStatus
       && (['checked in', 'checked out'].includes(payload.status) || leavingCheckedInState);
 
     if (isMeterLifecycleTransition) {
-      Alert.alert(t('Meter photo required'), t('Use the Check in or Check out action from customer details so the meter photo and reading are saved.'));
+      Alert.alert(t('Use checkout action'), t('Use the Check in or Check out action from customer details so the financial settlement is saved.'));
       return;
     }
 
@@ -241,29 +306,35 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
             }
           : {};
 
-      if (editingCustomer) {
-        await updateDoc(doc(db, 'tenants', editingCustomer.id), {
-          ...savedPayload,
-          ...lifecycleFields,
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        const customerRef = await addDoc(collection(db, 'tenants'), {
-          ...savedPayload,
-          ...lifecycleFields,
-          createdAt: serverTimestamp(),
-          idProof: savedPayload.idProof || null,
-          idProofName: savedPayload.idProofName || null,
-          idProofSize: savedPayload.idProofSize || 0,
-          idProofType: savedPayload.idProofType || null,
-          idProofBack: savedPayload.idProofBack || null,
-          idProofBackName: savedPayload.idProofBackName || null,
-          idProofBackSize: savedPayload.idProofBackSize || 0,
-          customerPhoto: savedPayload.customerPhoto || null,
-          customerPhotoName: savedPayload.customerPhotoName || null,
-          customerPhotoSize: savedPayload.customerPhotoSize || 0,
-        });
+      const customerRef = editingCustomer
+        ? doc(db, 'tenants', editingCustomer.id)
+        : doc(collection(db, 'tenants'));
+      const nextCustomer = { id: customerRef.id, ...editingCustomer, ...savedPayload, ...lifecycleFields } as TenantRecord;
 
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customerRef.id, editingCustomer || undefined, nextCustomer, tenants.data);
+        if (editingCustomer) {
+          transaction.update(customerRef, { ...savedPayload, ...lifecycleFields, updatedAt: serverTimestamp() });
+        } else {
+          transaction.set(customerRef, {
+            ...savedPayload,
+            ...lifecycleFields,
+            createdAt: serverTimestamp(),
+            idProof: savedPayload.idProof || null,
+            idProofName: savedPayload.idProofName || null,
+            idProofSize: savedPayload.idProofSize || 0,
+            idProofType: savedPayload.idProofType || null,
+            idProofBack: savedPayload.idProofBack || null,
+            idProofBackName: savedPayload.idProofBackName || null,
+            idProofBackSize: savedPayload.idProofBackSize || 0,
+            customerPhoto: savedPayload.customerPhoto || null,
+            customerPhotoName: savedPayload.customerPhotoName || null,
+            customerPhotoSize: savedPayload.customerPhotoSize || 0,
+          });
+        }
+      });
+
+      if (!editingCustomer) {
         if (requiresInitialMeter) {
           setPendingMeterLifecycle({
             action: 'check-in',
@@ -284,7 +355,7 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
     }
   }
 
-  async function deleteCustomer(customer: TenantRecord) {
+  async function archiveCustomer(customer: TenantRecord) {
     const actorUid = auth.currentUser?.uid;
     if (!actorUid) {
       setActionError(t('Please sign in again.'));
@@ -295,34 +366,47 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
     setActionError('');
 
     try {
-      const batch = writeBatch(db);
-      if (customer.userId) {
-        batch.update(doc(db, 'users', customer.userId), {
-          accessStatus: 'revoked',
-          revokedAt: serverTimestamp(),
+      const archivedStatus = getCustomerStatus(customer) === 'booked' ? 'cancelled' : 'inactive';
+      const archiveDate = getLocalDate(new Date());
+      const archivedCustomer = { ...customer, accessStatus: customer.userId ? 'revoked' : customer.accessStatus, archived: true, moveOutDate: customer.moveOutDate || archiveDate, status: archivedStatus } as TenantRecord;
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customer.id, customer, archivedCustomer, tenants.data);
+        if (customer.userId) {
+          transaction.update(doc(db, 'users', customer.userId), {
+            accessStatus: 'revoked',
+            revokedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+        transaction.update(doc(db, 'tenants', customer.id), {
+          accessStatus: customer.userId ? 'revoked' : customer.accessStatus || 'active',
+          archived: true,
+          archivedAt: serverTimestamp(),
+          archivedBy: actorUid,
+          checkedOutAt: serverTimestamp(),
+          moveOutDate: customer.moveOutDate || archiveDate,
+          status: archivedStatus,
           updatedAt: serverTimestamp(),
         });
-      }
-      batch.delete(doc(db, 'tenants', customer.id));
-      batch.set(doc(collection(db, 'auditEvents')), {
-        action: 'customer.deleted',
-        actorUid,
-        createdAt: serverTimestamp(),
-        customerId: customer.id,
-        customerName: getCustomerName(customer),
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: 'customer.archived',
+          actorUid,
+          createdAt: serverTimestamp(),
+          customerId: customer.id,
+          customerName: getCustomerName(customer),
+        });
       });
-      await batch.commit();
     } catch (deleteError) {
-      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not delete customer.'));
+      setActionError(deleteError instanceof Error ? deleteError.message : t('Could not archive customer.'));
     } finally {
       setDeletingId('');
     }
   }
 
-  function confirmDelete(customer: TenantRecord) {
-    Alert.alert(t('Delete customer?'), `${t('Delete')} ${customer.name || t('this customer')}? ${t('This cannot be undone.')}`, [
+  function confirmArchive(customer: TenantRecord) {
+    Alert.alert(t('Archive customer?'), `${customer.name || t('This customer')} · ${t('Their history and financial records will be kept.')}`, [
       { text: t('Cancel'), style: 'cancel' },
-      { text: t('Delete'), style: 'destructive', onPress: () => deleteCustomer(customer) },
+      { text: t('Archive'), style: 'destructive', onPress: () => archiveCustomer(customer) },
     ]);
   }
 
@@ -435,18 +519,10 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
 
   function getRoomReading(customer: TenantRecord) {
     const room = parseRoomLabel(customer.room).room;
-    const roomReading = meterReadings.data.find((reading) => parseRoomLabel(reading.tenantRoom).room === room);
+    const roomReading = meterReadings.data.find((reading) =>
+      !meterReadingNeedsReview(meterReadings.data, reading)
+      && parseRoomLabel(reading.tenantRoom).room === room);
     return toNumber(roomReading?.currentReading);
-  }
-
-  function getCheckInReading(customer: TenantRecord) {
-    const storedReading = toNumber(customer.checkInMeterReading);
-    if (storedReading) return storedReading;
-
-    const checkInReading = meterReadings.data.find(
-      (reading) => reading.tenantId === customer.id && reading.readingType === 'check-in',
-    );
-    return toNumber(checkInReading?.currentReading) || getRoomReading(customer);
   }
 
   function startMeterLifecycle(customer: TenantRecord, action: PendingMeterLifecycle['action']) {
@@ -454,7 +530,7 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
     setPendingMeterLifecycle({
       action,
       customer,
-      minimumReading: action === 'check-out' ? getCheckInReading(customer) : getRoomReading(customer),
+      minimumReading: getRoomReading(customer),
     });
   }
 
@@ -463,6 +539,11 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
 
     const { action, customer, minimumReading } = pendingMeterLifecycle;
     const checkingIn = action === 'check-in';
+    if (!checkingIn) {
+      setPendingMeterLifecycle(null);
+      setPendingSettlement({ customer, meterResult: result, minimumReading });
+      return;
+    }
     const setBusy = checkingIn ? setCheckingInId : setCheckingOutId;
     const actorUid = auth.currentUser?.uid;
     if (!actorUid) {
@@ -475,29 +556,8 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
     try {
       const eventTime = new Date();
       const readingRef = doc(collection(db, 'meterReadings'));
-      const batch = writeBatch(db);
       const unitsConsumed = checkingIn ? 0 : Math.max(0, result.reading - minimumReading);
-
-      batch.set(readingRef, {
-        billAmount: unitsConsumed * 10,
-        createdAt: serverTimestamp(),
-        currentReading: result.reading,
-        month: `${eventTime.getFullYear()}-${String(eventTime.getMonth() + 1).padStart(2, '0')}`,
-        note: checkingIn ? 'Check-in meter photo' : 'Check-out meter photo',
-        ocrText: result.ocrText,
-        photo: result.photo,
-        photoSize: result.photoSize,
-        previousReading: minimumReading,
-        ratePerUnit: 10,
-        readingSource: 'ocr-locked',
-        readingType: action,
-        tenantId: customer.id,
-        tenantName: customer.name || customer.fullName || customer.tenantName || 'Unnamed customer',
-        tenantRoom: customer.room || '',
-        unitsConsumed,
-      });
-
-      batch.update(doc(db, 'tenants', customer.id), checkingIn ? {
+      const tenantUpdate = checkingIn ? {
         checkedInAt: serverTimestamp(),
         checkInMeterReading: result.reading,
         checkInMeterReadingId: readingRef.id,
@@ -513,16 +573,38 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
         moveOutTime: eventTime.toTimeString().slice(0, 5),
         status: 'checked out',
         updatedAt: serverTimestamp(),
-      });
-      batch.set(doc(collection(db, 'auditEvents')), {
-        action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
-        actorUid,
-        createdAt: serverTimestamp(),
-        customerId: customer.id,
-        customerName: customer.name || customer.fullName || customer.tenantName || '',
-      });
+      };
+      const nextCustomer = { ...customer, ...tenantUpdate, status: checkingIn ? 'checked in' : 'checked out' } as TenantRecord;
 
-      await batch.commit();
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customer.id, customer, nextCustomer, tenants.data);
+        transaction.set(readingRef, {
+          billAmount: unitsConsumed * 10,
+          createdAt: serverTimestamp(),
+          currentReading: result.reading,
+          month: `${eventTime.getFullYear()}-${String(eventTime.getMonth() + 1).padStart(2, '0')}`,
+          note: checkingIn ? 'Check-in meter photo' : 'Check-out meter photo',
+          ocrText: result.ocrText,
+          photo: result.photo,
+          photoSize: result.photoSize,
+          previousReading: minimumReading,
+          ratePerUnit: 10,
+          readingSource: `ocr-confirmed-${result.photoSource}`,
+          readingType: action,
+          tenantId: customer.id,
+          tenantName: customer.name || customer.fullName || customer.tenantName || 'Unnamed customer',
+          tenantRoom: customer.room || '',
+          unitsConsumed,
+        });
+        transaction.update(doc(db, 'tenants', customer.id), tenantUpdate);
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
+          actorUid,
+          createdAt: serverTimestamp(),
+          customerId: customer.id,
+          customerName: customer.name || customer.fullName || customer.tenantName || '',
+        });
+      });
       setPendingMeterLifecycle(null);
     } catch (lifecycleError) {
       setActionError(lifecycleError instanceof Error ? lifecycleError.message : t('Could not save meter lifecycle.'));
@@ -533,6 +615,10 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
 
   async function completeRoomLifecycle(customer: TenantRecord, action: PendingMeterLifecycle['action']) {
     const checkingIn = action === 'check-in';
+    if (!checkingIn) {
+      setPendingSettlement({ customer, minimumReading: 0 });
+      return;
+    }
     const setBusy = checkingIn ? setCheckingInId : setCheckingOutId;
     const actorUid = auth.currentUser?.uid;
 
@@ -546,8 +632,7 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
 
     try {
       const eventTime = new Date();
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'tenants', customer.id), checkingIn ? {
+      const tenantUpdate = checkingIn ? {
         checkedInAt: serverTimestamp(),
         moveInDate: getLocalDate(eventTime),
         moveInTime: eventTime.toTimeString().slice(0, 5),
@@ -559,19 +644,131 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
         moveOutTime: eventTime.toTimeString().slice(0, 5),
         status: 'checked out',
         updatedAt: serverTimestamp(),
+      };
+      const nextCustomer = { ...customer, ...tenantUpdate, status: checkingIn ? 'checked in' : 'checked out' } as TenantRecord;
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customer.id, customer, nextCustomer, tenants.data);
+        transaction.update(doc(db, 'tenants', customer.id), tenantUpdate);
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
+          actorUid,
+          createdAt: serverTimestamp(),
+          customerId: customer.id,
+          customerName: customer.name || customer.fullName || customer.tenantName || '',
+        });
       });
-      batch.set(doc(collection(db, 'auditEvents')), {
-        action: checkingIn ? 'customer.checked_in' : 'customer.checked_out',
-        actorUid,
-        createdAt: serverTimestamp(),
-        customerId: customer.id,
-        customerName: customer.name || customer.fullName || customer.tenantName || '',
-      });
-      await batch.commit();
     } catch (lifecycleError) {
       setActionError(lifecycleError instanceof Error ? lifecycleError.message : t('Could not update customer lifecycle.'));
     } finally {
       setBusy('');
+    }
+  }
+
+  async function finalizeCheckout(draft: CheckoutSettlementDraft) {
+    if (!pendingSettlement) return;
+    const actorUid = auth.currentUser?.uid;
+    if (!actorUid) return setActionError(t('Please sign in again.'));
+
+    const { customer, meterResult, minimumReading } = pendingSettlement;
+    const result = calculateSettlement({ ...draft, ledgerBalance: settlementPreview.ledgerBalance });
+    const eventTime = new Date();
+    const tenantPayments = payments.data.filter((payment) => payment.tenantId === customer.id || payment.userId === customer.id);
+    const paidAtSettlement = getCollectedTotal(tenantPayments) + result.paymentReceived;
+    const paymentRef = doc(collection(db, 'payments'));
+    const readingRef = doc(collection(db, 'meterReadings'));
+    const tenantUpdate = {
+      checkedOutAt: serverTimestamp(),
+      moveOutDate: getLocalDate(eventTime),
+      moveOutTime: eventTime.toTimeString().slice(0, 5),
+      ...(meterResult ? { checkOutMeterReading: meterResult.reading, checkOutMeterReadingId: readingRef.id } : {}),
+      status: 'checked out',
+      updatedAt: serverTimestamp(),
+    };
+    const nextCustomer = { ...customer, ...tenantUpdate, status: 'checked out' } as TenantRecord;
+
+    setSavingSettlement(true);
+    setCheckingOutId(customer.id);
+    setActionError('');
+    try {
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customer.id, customer, nextCustomer, tenants.data);
+
+        if (meterResult) {
+          const unitsConsumed = Math.max(0, meterResult.reading - minimumReading);
+          transaction.set(readingRef, {
+            billAmount: unitsConsumed * 10,
+            createdAt: serverTimestamp(),
+            currentReading: meterResult.reading,
+            month: settlementPreview.month,
+            note: 'Check-out meter photo',
+            ocrText: meterResult.ocrText,
+            photo: meterResult.photo,
+            photoSize: meterResult.photoSize,
+            previousReading: minimumReading,
+            ratePerUnit: 10,
+            readingSource: `ocr-confirmed-${meterResult.photoSource}`,
+            readingType: 'check-out',
+            tenantId: customer.id,
+            tenantName: getCustomerName(customer),
+            tenantRoom: customer.room || '',
+            unitsConsumed,
+          });
+        }
+
+        if (result.paymentReceived > 0) {
+          transaction.set(paymentRef, {
+            amountPaid: result.paymentReceived,
+            balance: result.finalBalance,
+            businessType: customer.businessType || 'pg',
+            createdAt: serverTimestamp(),
+            createdBy: actorUid,
+            month: settlementPreview.month,
+            note: 'Checkout settlement',
+            paidOn: eventTime.toLocaleDateString('en-IN'),
+            status: 'Recorded',
+            tenantId: customer.id,
+            tenantName: getCustomerName(customer),
+            tenantRoom: customer.room || '',
+            totalRent: result.grossDue,
+          });
+          transaction.set(doc(collection(db, 'auditEvents')), {
+            action: 'payment.created', actorUid, createdAt: serverTimestamp(), entityId: paymentRef.id, entityType: 'payment',
+          });
+        }
+
+        transaction.update(doc(db, 'tenants', customer.id), tenantUpdate);
+        transaction.set(doc(db, 'settlements', customer.id), {
+          depositApplied: result.depositApplied,
+          depositHeld: draft.depositHeld,
+          discount: draft.discount,
+          extraCharge: draft.extraCharge,
+          finalBalance: result.finalBalance,
+          finalizedAt: serverTimestamp(),
+          finalizedBy: actorUid,
+          grossDue: result.grossDue,
+          ledgerBalance: settlementPreview.ledgerBalance,
+          month: settlementPreview.month,
+          paidAtSettlement,
+          paymentReceived: result.paymentReceived,
+          refundDue: result.refundDue,
+          refundStatus: result.refundDue > 0 ? 'Due' : 'None',
+          status: 'Final',
+          tenantId: customer.id,
+          tenantName: getCustomerName(customer),
+        });
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: 'settlement.finalized', actorUid, createdAt: serverTimestamp(), entityId: customer.id, entityType: 'settlement',
+        });
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: 'customer.checked_out', actorUid, createdAt: serverTimestamp(), customerId: customer.id, customerName: getCustomerName(customer),
+        });
+      });
+      setPendingSettlement(null);
+    } catch (settlementError) {
+      setActionError(settlementError instanceof Error ? settlementError.message : t('Could not finalize checkout.'));
+    } finally {
+      setSavingSettlement(false);
+      setCheckingOutId('');
     }
   }
 
@@ -588,6 +785,10 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
   }
 
   function confirmCheckOut(customer: TenantRecord) {
+    if (payments.loading || invoices.loading || settlements.loading || meterReadings.loading) {
+      setActionError(t('Wait for financial records to finish loading, then try checkout again.'));
+      return;
+    }
     if (String(customer.businessType || 'pg') === 'pg') {
       startMeterLifecycle(customer, 'check-out');
       return;
@@ -610,29 +811,31 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
     setActionError('');
 
     try {
-      const batch = writeBatch(db);
-      batch.update(doc(db, 'tenants', customer.id), {
+      const tenantUpdate = {
         ...(customer.userId ? { accessStatus: 'revoked', revokedAt: serverTimestamp() } : {}),
         cancelledAt: serverTimestamp(),
         cancelledBy: actorUid,
         status: 'cancelled',
         updatedAt: serverTimestamp(),
-      });
-      if (customer.userId) {
-        batch.update(doc(db, 'users', customer.userId), {
-          accessStatus: 'revoked',
-          revokedAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
+      };
+      await runTransaction(db, async (transaction) => {
+        await syncAllocationGuard(transaction, customer.id, customer, { ...customer, ...tenantUpdate, status: 'cancelled' } as TenantRecord, tenants.data);
+        transaction.update(doc(db, 'tenants', customer.id), tenantUpdate);
+        if (customer.userId) {
+          transaction.update(doc(db, 'users', customer.userId), {
+            accessStatus: 'revoked',
+            revokedAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        }
+        transaction.set(doc(collection(db, 'auditEvents')), {
+          action: 'customer.reservation_cancelled',
+          actorUid,
+          createdAt: serverTimestamp(),
+          customerId: customer.id,
+          customerName: customer.name || customer.fullName || customer.tenantName || '',
         });
-      }
-      batch.set(doc(collection(db, 'auditEvents')), {
-        action: 'customer.reservation_cancelled',
-        actorUid,
-        createdAt: serverTimestamp(),
-        customerId: customer.id,
-        customerName: customer.name || customer.fullName || customer.tenantName || '',
       });
-      await batch.commit();
     } catch (cancelError) {
       setActionError(cancelError instanceof Error ? cancelError.message : t('Could not cancel reservation.'));
     } finally {
@@ -653,7 +856,6 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
         <CustomerFormSheet
           customer={editingCustomer}
           customers={tenants.data}
-          now={now}
           onClose={() => {
             setShowForm(false);
             setEditingCustomer(null);
@@ -672,6 +874,16 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
           onClose={() => setPendingMeterLifecycle(null)}
           onSubmit={completeMeterLifecycle}
           saving={checkingInId === pendingMeterLifecycle.customer.id || checkingOutId === pendingMeterLifecycle.customer.id}
+        />
+      ) : null}
+      {pendingSettlement ? (
+        <CheckoutSettlementSheet
+          automaticCharge={settlementPreview.automaticCharge}
+          customer={pendingSettlement.customer}
+          ledgerBalance={settlementPreview.ledgerBalance}
+          onClose={() => setPendingSettlement(null)}
+          onSubmit={finalizeCheckout}
+          saving={savingSettlement}
         />
       ) : null}
 
@@ -760,6 +972,14 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
         </Pressable>
       ) : null}
 
+      {actionFilter ? (
+        <Pressable accessibilityRole="button" onPress={() => setActionFilter('')} style={styles.activeRoomFilter}>
+          <Text style={styles.activeRoomFilterText}>
+            {t(actionFilter === 'arrival' ? 'Ready to check in selected. Tap to clear' : 'Check-outs due selected. Tap to clear')}
+          </Text>
+        </Pressable>
+      ) : null}
+
       <TextInput
         autoCapitalize="none"
         onChangeText={setSearch}
@@ -818,7 +1038,7 @@ export function CustomersScreen({ isAdmin }: { isAdmin: boolean }) {
               expanded={selectedCustomerId === tenant.id}
               inviting={invitingId === tenant.id}
               key={tenant.id}
-              onDelete={isAdmin ? () => confirmDelete(tenant) : undefined}
+              onDelete={isAdmin ? () => confirmArchive(tenant) : undefined}
               onCancel={() => confirmCancelReservation(tenant)}
               onAccessChange={isAdmin && tenant.userId && tenant.accessStatus !== 'revoked' ? () => changeCustomerAccess(tenant) : undefined}
               onEdit={() => openEditForm(tenant)}
@@ -873,31 +1093,9 @@ const customerFormSteps: Array<{ id: CustomerFormStep; label: string }> = [
   { id: 'details', label: 'Details' },
 ];
 
-function normalizeLibrarySeat(value: unknown) {
-  const text = String(value || '').trim().toUpperCase().replace(/\s+/g, '');
-  const rawSeat = text.replace(/^SEAT/, '');
-  const match = rawSeat.match(/^([A-Z])0*(\d{1,3})$/);
-
-  if (!match) return rawSeat;
-
-  return `${match[1]}${match[2].padStart(2, '0')}`;
-}
-
-function getAllocationKey(value: unknown, businessType: string) {
-  const text = String(value || '').trim();
-
-  if (businessType === 'library') {
-    const seatMatch = text.match(/Seat\s+([A-Z]\d{1,2})/i) || text.match(/^([A-Z]\d{1,2})$/i);
-    return normalizeLibrarySeat(seatMatch?.[1] || text);
-  }
-
-  return parseRoomLabel(text).room;
-}
-
 function CustomerFormSheet({
   customer,
   customers,
-  now,
   onClose,
   onSubmit,
   saving,
@@ -905,7 +1103,6 @@ function CustomerFormSheet({
 }: {
   customer: TenantRecord | null;
   customers: TenantRecord[];
-  now: number;
   onClose: () => void;
   onSubmit: (payload: CustomerDraft) => Promise<string | void>;
   saving: boolean;
@@ -946,6 +1143,7 @@ function CustomerFormSheet({
   const activeType = getBusinessType(form.businessType);
   const selectedDocument = documentTypes.find((item) => item.value === form.documentType) || documentTypes[0];
   const currentAllocation = getAllocationKey(customer?.room, form.businessType);
+  const draftStay = { id: customer?.id || 'draft', ...form } as TenantRecord;
   const allocationNumbers = form.businessType === 'library' ? [] : roomNumbers;
   const allocationOccupants = customers.filter((item) => {
     const itemType = String(item.businessType || 'pg');
@@ -953,9 +1151,9 @@ function CustomerFormSheet({
       ? itemType === 'library'
       : ['pg', 'hotel'].includes(itemType);
 
-    const activelyAllocated = form.businessType === 'library'
-      ? activeAllocationStatuses.includes(getCustomerStatus(item))
-      : isRoomCustomer(item, now);
+    const activelyAllocated = activeAllocationStatuses.includes(getCustomerStatus(item))
+      && !(form.status === 'booked' && !form.moveInDate)
+      && staysOverlap(item, draftStay);
 
     return item.id !== customer?.id && sameInventory && activelyAllocated;
   });
@@ -1296,6 +1494,12 @@ function CustomerFormSheet({
       return;
     }
 
+    if (!customer && form.status === 'booked' && form.moveInDate < getLocalDate(new Date())) {
+      setFormStep('details');
+      setFormError(t('Choose today or a future date for the reservation.'));
+      return;
+    }
+
     if (!customer && form.status !== 'booked' && form.moveInDate > getLocalDate(new Date())) {
       setFormStep('details');
       setFormError(t('Choose Reserve for later when the start date is in the future.'));
@@ -1305,6 +1509,12 @@ function CustomerFormSheet({
     if (form.moveOutDate && !isValidDateText(form.moveOutDate)) {
       setFormStep('details');
       setFormError(t('Select a valid move-out date.'));
+      return;
+    }
+
+    if (form.businessType === 'hotel' && !form.moveOutDate) {
+      setFormStep('details');
+      setFormError(t('Choose a check-out date for the hotel stay.'));
       return;
     }
 

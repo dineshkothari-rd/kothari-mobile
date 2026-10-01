@@ -7,9 +7,12 @@ import { NoticesScreen } from '../notices/NoticesScreen';
 import { SettingsScreen } from '../settings/SettingsScreen';
 import { StaffScreen } from '../staff/StaffScreen';
 import { SupportRequestsScreen } from '../support/SupportRequestsScreen';
+import { AuditScreen } from '../audit/AuditScreen';
+import { SettlementsScreen } from '../money/SettlementsScreen';
+import { InventoryCalendarScreen } from '../customers/InventoryCalendarScreen';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
-export type MoreView = 'enquiries' | 'notices' | 'meter' | 'requests' | 'settings' | 'team';
+export type MoreView = 'audit' | 'calendar' | 'enquiries' | 'notices' | 'meter' | 'requests' | 'settings' | 'settlements' | 'team';
 
 const moreViews: Array<{ label: string; value: MoreView }> = [
   { label: 'Enquiries', value: 'enquiries' },
@@ -18,6 +21,9 @@ const moreViews: Array<{ label: string; value: MoreView }> = [
   { label: 'Requests', value: 'requests' },
   { label: 'Settings', value: 'settings' },
   { label: 'Team', value: 'team' },
+  { label: 'Audit', value: 'audit' },
+  { label: 'Settlements', value: 'settlements' },
+  { label: 'Calendar', value: 'calendar' },
 ];
 
 export function MoreScreen({ isAdmin, onViewChange, view }: { isAdmin: boolean; onViewChange: (view: MoreView) => void; view: MoreView }) {
@@ -28,7 +34,7 @@ export function MoreScreen({ isAdmin, onViewChange, view }: { isAdmin: boolean; 
   return (
     <View>
       <View style={styles.switcher}>
-        {moreViews.filter((item) => item.value !== 'team' || isAdmin).map((item) => {
+        {moreViews.filter((item) => !['audit', 'team'].includes(item.value) || isAdmin).map((item) => {
           const active = item.value === view;
 
           return (
@@ -55,6 +61,12 @@ export function MoreScreen({ isAdmin, onViewChange, view }: { isAdmin: boolean; 
         <SupportRequestsScreen />
       ) : view === 'team' && isAdmin ? (
         <StaffScreen />
+      ) : view === 'audit' && isAdmin ? (
+        <AuditScreen />
+      ) : view === 'settlements' ? (
+        <SettlementsScreen />
+      ) : view === 'calendar' ? (
+        <InventoryCalendarScreen />
       ) : (
         <SettingsScreen />
       )}

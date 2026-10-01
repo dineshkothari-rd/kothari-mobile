@@ -15,7 +15,6 @@ export function useAppSession() {
     let stopProfile: () => void = () => undefined;
     const unsubscribe = watchAuthState(async (user) => {
       stopProfile();
-      setStatus('checking');
 
       if (!user) {
         setProfile(null);
@@ -45,6 +44,7 @@ export function useAppSession() {
           setProfile(updatedProfile);
         }, () => setError('Could not refresh account access. Please try again.'));
       } catch {
+        await signOutAccount().catch(() => undefined);
         setProfile(null);
         setError('Could not verify account access. Please try again.');
         setStatus('signedOut');
@@ -71,7 +71,9 @@ export function useAppSession() {
       setProfile(nextProfile);
       setStatus('signedIn');
     } catch (signInError) {
-      setError(signInError instanceof Error ? signInError.message : 'Invalid email or password.');
+      setError(signInError instanceof Error && signInError.message.startsWith('Access denied.')
+        ? signInError.message
+        : 'Invalid email or password.');
       setProfile(null);
       setStatus('signedOut');
     } finally {

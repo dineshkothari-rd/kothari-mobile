@@ -23,27 +23,31 @@ import { getBusinessType } from '../customers/businessTypes';
 import { getCustomerAllocationLabel } from '../customers/customerUtils';
 import {
   calculateMonthlyDues,
+  calculatePaymentResult,
+  buildDuesCsv,
   getCollectedTotal,
   getMonthDisplay,
   getMonthKey,
   getPaymentAmount,
   getPaymentTenantId,
+  getRemainingPaymentBalance,
   isVoided,
   matchesMonth,
+  meterReadingNeedsReview,
   shiftMonth,
   summarizeDues,
 } from '../operations/operationsMath';
 import { useFirestoreCollection } from '../../shared/hooks/useFirestoreCollection';
 import { TextField } from '../../shared/components/TextField';
 import { auth, db } from '../../lib/firebase/client';
-import type { DueRecord, PaymentRecord, TenantRecord } from '../../shared/types/records';
+import type { DueRecord, InvoiceRecord, MeterReadingRecord, PaymentRecord, SettlementRecord, TenantRecord } from '../../shared/types/records';
 import { money, toNumber } from '../../shared/utils/money';
 import { ExpenseDesk } from './ExpenseDesk';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 
 type MoneyView = 'dues' | 'collections' | 'expenses';
 type DueStatusFilter = 'due' | 'partial' | 'pending' | 'paid' | 'all';
-type PaymentStatusFilter = 'all' | 'paid' | 'partial' | 'pending' | 'recorded';
+type PaymentStatusFilter = 'all' | 'recorded';
 type PaymentDraft = {
   amountPaid: number;
   balance: number;
@@ -68,24 +72,11 @@ const dueFilters: Array<{ label: string; value: DueStatusFilter }> = [
 
 const paymentFilters: Array<{ label: string; value: PaymentStatusFilter }> = [
   { label: 'All', value: 'all' },
-  { label: 'Paid', value: 'paid' },
-  { label: 'Partial', value: 'partial' },
-  { label: 'Pending', value: 'pending' },
   { label: 'Recorded', value: 'recorded' },
 ];
 
 function getPaymentStatus(payment: PaymentRecord) {
-  const status = String(payment.status || '').trim();
-
-  if (status) return status;
-
-  const totalRent = toNumber(payment.totalRent);
-  const paid = getPaymentAmount(payment);
-  const balance = toNumber(payment.balance);
-
-  if (balance > 0) return paid > 0 ? 'Partial' : 'Pending';
-  if (totalRent && paid >= totalRent) return 'Paid';
-  return 'Recorded';
+  return isVoided(payment) ? 'Voided' : 'Recorded';
 }
 
 function getPaymentTenantName(payment: PaymentRecord, tenants: TenantRecord[]) {
@@ -161,10 +152,6 @@ function matchesPaymentStatus(payment: PaymentRecord, filter: PaymentStatusFilte
   if (filter === 'all') return true;
 
   return getPaymentStatus(payment).toLowerCase() === filter;
-}
-
-function getBalanceTotal(payments: PaymentRecord[]) {
-  return payments.reduce((sum, payment) => sum + toNumber(payment.balance), 0);
 }
 
 function getPaymentTime(payment: PaymentRecord) {
@@ -365,7 +352,10 @@ function buildBillHtml(due: DueRecord, t: (text: string) => string) {
     documentNumber: `${t('Bill for')} ${due.month}`,
     generatedAt: new Date().toLocaleString('en-IN'),
     labels: getPdfLabels(t),
-    lineItems: [{ label: t(type.feeLabel), value: money(due.rent) }],
+    lineItems: [
+      { label: t(type.feeLabel), value: money(due.baseAmount) },
+      ...(due.meterAmount ? [{ label: t('Electricity'), value: money(due.meterAmount) }] : []),
+    ],
     meta: [
       { label: t(type.unitLabel), value: allocation },
       { label: t('Month'), value: due.month },
@@ -428,7 +418,7 @@ export async function downloadPdf({ fileName, html, title }: { fileName: string;
 export function MoneyScreen() {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
-  const styles = createStyles(colors);
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [view, setView] = useState<MoneyView>('dues');
   const [month, setMonth] = useState(getMonthKey());
   const [search, setSearch] = useState('');
@@ -438,13 +428,20 @@ export function MoneyScreen() {
   const [paymentFormTenantId, setPaymentFormTenantId] = useState('');
   const [paymentFormAmount, setPaymentFormAmount] = useState(0);
   const [savingPayment, setSavingPayment] = useState(false);
+  const [invoiceAction, setInvoiceAction] = useState<'export' | 'generate' | ''>('');
   const [deletingPaymentId, setDeletingPaymentId] = useState('');
   const [actionError, setActionError] = useState('');
   const tenants = useFirestoreCollection<TenantRecord>('tenants', { sortBy: 'createdAt' });
   const payments = useFirestoreCollection<PaymentRecord>('payments', { sortBy: 'createdAt' });
+  const meterReadings = useFirestoreCollection<MeterReadingRecord>('meterReadings', { sortBy: 'createdAt' });
+  const invoices = useFirestoreCollection<InvoiceRecord>('invoices', { sortBy: 'issuedAt' });
+  const settlements = useFirestoreCollection<SettlementRecord>('settlements', { sortBy: 'finalizedAt' });
   const activePayments = useMemo(() => payments.data.filter((payment) => !isVoided(payment)), [payments.data]);
 
-  const dues = useMemo(() => calculateMonthlyDues(tenants.data, activePayments, month), [activePayments, month, tenants.data]);
+  const dues = useMemo(
+    () => calculateMonthlyDues(tenants.data, activePayments, month, meterReadings.data, invoices.data),
+    [activePayments, invoices.data, meterReadings.data, month, tenants.data],
+  );
   const monthlyPayments = useMemo(
     () => activePayments.filter((payment) => matchesMonth(payment, month, ['paidOn', 'date', 'createdAt', 'updatedAt'])),
     [activePayments, month],
@@ -464,12 +461,11 @@ export function MoneyScreen() {
     () => [...activePayments].sort((first, second) => getPaymentTime(second) - getPaymentTime(first)).slice(0, 5),
     [activePayments],
   );
-  const duesSummary = summarizeDues(dues);
-  const visibleDuesSummary = summarizeDues(visibleDues);
-  const collected = getCollectedTotal(visiblePayments);
-  const balance = getBalanceTotal(visiblePayments);
-  const loading = tenants.loading || payments.loading;
-  const error = tenants.error || payments.error;
+  const duesSummary = useMemo(() => summarizeDues(dues), [dues]);
+  const visibleDuesSummary = useMemo(() => summarizeDues(visibleDues), [visibleDues]);
+  const collected = useMemo(() => getCollectedTotal(visiblePayments), [visiblePayments]);
+  const loading = tenants.loading || payments.loading || meterReadings.loading || invoices.loading || settlements.loading;
+  const error = tenants.error || payments.error || meterReadings.error || invoices.error || settlements.error;
   const activeFilters = view === 'dues' ? dueFilters : paymentFilters;
   const currentMonth = getMonthKey();
 
@@ -515,6 +511,69 @@ export function MoneyScreen() {
       setActionError(createError instanceof Error ? createError.message : t('Could not record payment.'));
     } finally {
       setSavingPayment(false);
+    }
+  }
+
+  async function generateMonthlyInvoices() {
+    setInvoiceAction('generate');
+    setActionError('');
+
+    try {
+      const actorUid = auth.currentUser?.uid;
+      if (!actorUid) throw new Error(t('Please sign in again.'));
+      const existing = new Set(invoices.data.filter((invoice) => invoice.month === month).map((invoice) => invoice.tenantId));
+      const missing = dues.filter((due) => !existing.has(due.tenantId));
+      if (!missing.length) throw new Error(t('Invoices are already generated for this month.'));
+      if (missing.length > 498) throw new Error(t('Generate invoices in a smaller customer batch.'));
+
+      const batch = writeBatch(db);
+      missing.forEach((due) => {
+        batch.set(doc(db, 'invoices', `${due.tenantId}_${month}`), {
+          baseAmount: due.baseAmount,
+          businessType: due.businessType,
+          issuedAt: serverTimestamp(),
+          issuedBy: actorUid,
+          meterAmount: due.meterAmount,
+          month,
+          status: 'Issued',
+          tenantId: due.tenantId,
+          tenantName: due.tenantName,
+          tenantRoom: due.tenantRoom,
+          total: due.rent,
+        });
+      });
+      batch.set(doc(collection(db, 'auditEvents')), {
+        action: 'invoices.generated',
+        actorUid,
+        createdAt: serverTimestamp(),
+        entityId: month,
+        entityType: 'invoice_batch',
+        month,
+      });
+      await batch.commit();
+      Alert.alert(t('Invoices generated'), `${missing.length} ${t('invoices saved permanently for')} ${month}.`);
+    } catch (invoiceError) {
+      setActionError(invoiceError instanceof Error ? invoiceError.message : t('Could not generate invoices.'));
+    } finally {
+      setInvoiceAction('');
+    }
+  }
+
+  async function exportMonthlyReport() {
+    setInvoiceAction('export');
+    setActionError('');
+
+    try {
+      if (!(await Sharing.isAvailableAsync())) throw new Error(t('Sharing is not available on this device.'));
+      const report = new File(Paths.cache, `kothari-dues-${month}.csv`);
+      if (report.exists) report.delete();
+      report.create();
+      report.write(buildDuesCsv(dues));
+      await Sharing.shareAsync(report.uri, { dialogTitle: t('Export monthly report'), mimeType: 'text/csv' });
+    } catch (exportError) {
+      setActionError(exportError instanceof Error ? exportError.message : t('Could not export report.'));
+    } finally {
+      setInvoiceAction('');
     }
   }
 
@@ -591,6 +650,10 @@ export function MoneyScreen() {
           month={month}
           onClose={() => setShowPaymentForm(false)}
           onSubmit={createPayment}
+          payments={activePayments}
+          invoices={invoices.data}
+          settlements={settlements.data}
+          readings={meterReadings.data}
           saving={savingPayment}
           styles={styles}
           tenants={tenants.data}
@@ -638,13 +701,19 @@ export function MoneyScreen() {
         </View>
 
         {view === 'expenses' ? null : (
-          <Pressable
-            accessibilityRole="button"
-            onPress={() => openPaymentForm()}
-            style={styles.recordPaymentButton}
-          >
-            <Text style={styles.recordPaymentText}>{t('Record payment')}</Text>
-          </Pressable>
+          <View style={styles.heroActions}>
+            <Pressable accessibilityRole="button" onPress={() => openPaymentForm()} style={styles.recordPaymentButton}>
+              <Text style={styles.recordPaymentText}>{t('Record payment')}</Text>
+            </Pressable>
+            <View style={styles.secondaryActions}>
+              <Pressable disabled={Boolean(invoiceAction)} onPress={generateMonthlyInvoices} style={styles.secondaryAction}>
+                <Text style={styles.secondaryActionText}>{t(invoiceAction === 'generate' ? 'Saving...' : 'Freeze invoices')}</Text>
+              </Pressable>
+              <Pressable disabled={Boolean(invoiceAction)} onPress={exportMonthlyReport} style={styles.secondaryAction}>
+                <Text style={styles.secondaryActionText}>{t(invoiceAction === 'export' ? 'Exporting...' : 'Export CSV')}</Text>
+              </Pressable>
+            </View>
+          </View>
         )}
       </View>
 
@@ -726,7 +795,7 @@ export function MoneyScreen() {
           <Text style={styles.summaryLabel}>{t('Collections')}</Text>
           <Text style={styles.summaryValue}>{money(collected)}</Text>
           <Text style={styles.summaryMeta}>
-            {visiblePayments.length} {t('payments in')} {getMonthDisplay(month)}, {money(balance)} {t('still due')}
+            {visiblePayments.length} {t('payments in')} {getMonthDisplay(month)}, {money(duesSummary.balance)} {t('still due')}
           </Text>
         </View>
       )}
@@ -749,6 +818,7 @@ export function MoneyScreen() {
               deleting={deletingPaymentId === payment.id}
               key={payment.id}
               onDelete={() => confirmDeletePayment(payment)}
+              canVoid={!settlements.data.some((item) => item.tenantId === getPaymentTenantId(payment))}
               onDownloadReceipt={() => downloadReceipt(payment)}
               payment={payment}
               styles={styles}
@@ -768,6 +838,10 @@ function PaymentFormSheet({
   month,
   onClose,
   onSubmit,
+  payments,
+  invoices,
+  settlements,
+  readings,
   saving,
   styles,
   tenants,
@@ -777,6 +851,10 @@ function PaymentFormSheet({
   month: string;
   onClose: () => void;
   onSubmit: (payload: PaymentDraft) => void;
+  payments: PaymentRecord[];
+  invoices: InvoiceRecord[];
+  settlements: SettlementRecord[];
+  readings: MeterReadingRecord[];
   saving: boolean;
   styles: ReturnType<typeof createStyles>;
   tenants: TenantRecord[];
@@ -789,11 +867,20 @@ function PaymentFormSheet({
   const [formError, setFormError] = useState('');
   const selectedTenantId = tenantId || tenants[0]?.id || '';
   const selectedTenant = tenants.find((tenant) => tenant.id === selectedTenantId);
+  const hasSettlement = settlements.some((settlement) => settlement.tenantId === selectedTenantId);
   const selectedBusinessType = getBusinessType(selectedTenant?.businessType);
-  const tenantRent = toNumber(selectedTenant?.rent);
+  const selectedDue = calculateMonthlyDues(selectedTenant ? [selectedTenant] : [], payments, paymentMonth, readings, invoices)[0];
+  const tenantRent = selectedDue?.baseAmount || 0;
+  const meterAmount = selectedDue?.meterAmount || 0;
+  const totalCharge = selectedDue?.rent || 0;
+  const alreadyPaid = selectedDue?.paid || 0;
+  const meterReadingUnderReview = readings.some((reading) =>
+    reading.tenantId === selectedTenantId
+    && reading.month === paymentMonth
+    && meterReadingNeedsReview(readings, reading));
   const paid = toNumber(amountPaid);
-  const balance = Math.max(0, tenantRent - paid);
-  const status = tenantRent && paid >= tenantRent ? 'Paid' : paid > 0 ? 'Partial' : 'Pending';
+  const remainingBalance = getRemainingPaymentBalance(totalCharge, payments, selectedTenantId, paymentMonth);
+  const { balance, status } = calculatePaymentResult(totalCharge, payments, selectedTenantId, paymentMonth, paid);
   const tenantOptions = useMemo(
     () =>
       tenants.slice(0, 80).map((tenant) => ({
@@ -814,13 +901,28 @@ function PaymentFormSheet({
       return;
     }
 
-    if (!paymentMonth.trim()) {
-      setFormError(t('Enter payment month.'));
+    if (hasSettlement) {
+      setFormError(t('Record checkout balance payments in More → Settlements.'));
+      return;
+    }
+
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(paymentMonth.trim())) {
+      setFormError(t('Enter the month as YYYY-MM.'));
       return;
     }
 
     if (!paid || paid <= 0) {
       setFormError(t('Enter a valid amount paid.'));
+      return;
+    }
+
+    if (!selectedDue || remainingBalance <= 0) {
+      setFormError(t('No payment is due for this customer in the selected month.'));
+      return;
+    }
+
+    if (paid > remainingBalance) {
+      setFormError(`${t('Amount cannot be more than the remaining balance:')} ${money(remainingBalance)}`);
       return;
     }
 
@@ -831,11 +933,11 @@ function PaymentFormSheet({
       month: paymentMonth.trim(),
       note: note.trim(),
       paidOn: new Date().toLocaleDateString('en-IN'),
-      status,
+      status: 'Recorded',
       tenantId: selectedTenant.id,
       tenantName: getTenantDisplayName(selectedTenant),
       tenantRoom: getCustomerAllocationLabel(selectedTenant),
-      totalRent: tenantRent,
+      totalRent: totalCharge,
     });
   }
 
@@ -905,9 +1007,16 @@ function PaymentFormSheet({
 
             <View style={styles.formSummary}>
               <AmountCell label={t(selectedBusinessType.feeLabel)} styles={styles} value={money(tenantRent)} />
-              <AmountCell danger={balance > 0} label={t('Balance')} styles={styles} value={money(balance)} />
+              <AmountCell label={t('Electricity')} styles={styles} value={money(meterAmount)} />
+              <AmountCell label={t('Total')} styles={styles} value={money(totalCharge)} />
+              <AmountCell label={t('Already paid')} styles={styles} value={money(alreadyPaid)} />
+              <AmountCell danger={balance > 0} label={t('Balance after payment')} styles={styles} value={money(balance)} />
               <AmountCell label={t('Status')} styles={styles} value={t(status)} />
             </View>
+
+            {meterReadingUnderReview ? (
+              <Text style={styles.errorText}>{t('Electricity charge is not included until the meter reading is corrected.')}</Text>
+            ) : null}
 
             <TextField label="Note" onChangeText={setNote} placeholder="Optional note" value={note} />
 
@@ -1002,7 +1111,8 @@ function DueCard({
       </View>
 
       <View style={styles.amountGrid}>
-        <AmountCell label={t(type.feeLabel)} styles={styles} value={money(due.rent)} />
+        <AmountCell label={t(type.feeLabel)} styles={styles} value={money(due.baseAmount)} />
+        {due.meterAmount ? <AmountCell label={t('Electricity')} styles={styles} value={money(due.meterAmount)} /> : null}
         <AmountCell label={t('Paid')} styles={styles} value={money(due.paid)} />
         <AmountCell danger={due.balance > 0} label={t('Due')} styles={styles} value={money(due.balance)} />
       </View>
@@ -1026,6 +1136,7 @@ function DueCard({
 }
 
 function PaymentCard({
+  canVoid,
   deleting,
   onDelete,
   onDownloadReceipt,
@@ -1033,6 +1144,7 @@ function PaymentCard({
   styles,
   tenants,
 }: {
+  canVoid: boolean;
   deleting: boolean;
   onDelete: () => void;
   onDownloadReceipt: () => void;
@@ -1043,7 +1155,6 @@ function PaymentCard({
   const { t } = useLanguage();
   const status = getPaymentStatus(payment);
   const allocation = getPaymentAllocationLabel(payment, tenants);
-  const balance = toNumber(payment.balance);
 
   return (
     <View style={styles.recordCard}>
@@ -1060,7 +1171,6 @@ function PaymentCard({
 
       <View style={styles.amountGrid}>
         <AmountCell label={t('Paid')} styles={styles} value={money(getPaymentAmount(payment))} />
-        <AmountCell danger={balance > 0} label={t('Balance')} styles={styles} value={money(balance)} />
       </View>
 
       {payment.note ? <Text style={styles.note}>{String(payment.note)}</Text> : null}
@@ -1068,9 +1178,9 @@ function PaymentCard({
         <Pressable onPress={onDownloadReceipt} style={[styles.actionButton, styles.actionButtonSurface]}>
           <Text style={styles.actionTextAlt}>{t('Receipt')}</Text>
         </Pressable>
-        <Pressable disabled={deleting} onPress={onDelete} style={[styles.actionButton, styles.deleteInlineButton, deleting && styles.disabledAction]}>
+        {canVoid ? <Pressable disabled={deleting} onPress={onDelete} style={[styles.actionButton, styles.deleteInlineButton, deleting && styles.disabledAction]}>
           <Text style={styles.deleteInlineText}>{t(deleting ? 'Voiding...' : 'Void payment')}</Text>
-        </Pressable>
+        </Pressable> : null}
       </View>
     </View>
   );
@@ -1160,6 +1270,7 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.overlayFaint,
       borderRadius: radius.md,
       flexDirection: 'row',
+      gap: spacing.xs,
       padding: spacing.xs,
     },
     switchItem: {
@@ -1168,6 +1279,8 @@ function createStyles(colors: AppColors) {
       flex: 1,
       minHeight: 40,
       justifyContent: 'center',
+      paddingHorizontal: spacing.xs,
+      paddingVertical: spacing.xs,
     },
     switchItemActive: {
       backgroundColor: colors.surface,
@@ -1176,6 +1289,7 @@ function createStyles(colors: AppColors) {
       color: colors.panelMuted,
       fontSize: 13,
       fontWeight: typography.weight.black,
+      textAlign: 'center',
     },
     switchTextActive: {
       color: colors.text,
@@ -1248,9 +1362,29 @@ function createStyles(colors: AppColors) {
       alignItems: 'center',
       backgroundColor: colors.surface,
       borderRadius: radius.md,
-      marginTop: spacing.lg,
       minHeight: 48,
       justifyContent: 'center',
+    },
+    heroActions: {
+      gap: spacing.sm,
+      marginTop: spacing.lg,
+    },
+    secondaryActions: {
+      flexDirection: 'row',
+      gap: spacing.sm,
+    },
+    secondaryAction: {
+      alignItems: 'center',
+      backgroundColor: colors.overlaySubtle,
+      borderRadius: radius.md,
+      flex: 1,
+      minHeight: 44,
+      justifyContent: 'center',
+    },
+    secondaryActionText: {
+      color: colors.panelText,
+      fontSize: 12,
+      fontWeight: typography.weight.black,
     },
     recordPaymentText: {
       color: colors.text,
@@ -1448,6 +1582,7 @@ function createStyles(colors: AppColors) {
     },
     amountGrid: {
       flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: spacing.sm,
       marginTop: spacing.md,
     },
@@ -1455,17 +1590,19 @@ function createStyles(colors: AppColors) {
       backgroundColor: colors.surfaceMuted,
       borderRadius: radius.md,
       flex: 1,
+      flexBasis: '40%',
+      minHeight: 82,
       padding: spacing.md,
     },
     amountLabel: {
       color: colors.muted,
-      fontSize: 11,
+      fontSize: 12,
       fontWeight: typography.weight.black,
-      textTransform: 'uppercase',
+      lineHeight: 16,
     },
     amountValue: {
       color: colors.success,
-      fontSize: 14,
+      fontSize: 16,
       fontWeight: typography.weight.black,
       marginTop: spacing.xs,
     },
@@ -1645,6 +1782,7 @@ function createStyles(colors: AppColors) {
     },
     formSummary: {
       flexDirection: 'row',
+      flexWrap: 'wrap',
       gap: spacing.sm,
       marginVertical: spacing.lg,
     },

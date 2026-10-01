@@ -5,7 +5,7 @@ import type { TenantRecord } from '../../shared/types/records';
 import { money } from '../../shared/utils/money';
 import { useLanguage } from '../../shared/i18n/LanguageProvider';
 import { getBusinessType } from './businessTypes';
-import { getCustomerName, getCustomerStatus, getCustomerStatusGroup, getCustomerStatusLabel, getCustomerSubtitle } from './customerUtils';
+import { getCustomerName, getCustomerStatus, getCustomerStatusGroup, getCustomerStatusLabel, getCustomerSubtitle, maskDocumentId } from './customerUtils';
 
 type CustomerCardProps = {
   accessChanging?: boolean;
@@ -74,7 +74,7 @@ export function CustomerCard({ accessActionLabel, accessChanging = false, custom
       <View style={styles.detailGrid}>
         <Detail label={t(businessType.feeLabel)} styles={styles} value={money(customer.rent)} />
         <Detail action={callCustomer} label={t('Phone')} styles={styles} value={customer.phone || '-'} />
-        <Detail label={t('Document ID')} styles={styles} value={customer.documentId || '-'} />
+        <Detail label={t('Document ID')} styles={styles} value={maskDocumentId(customer.documentId)} />
         <Detail label={t(businessType.startDateLabel)} styles={styles} value={customer.moveInDate || '-'} />
         <Detail label={t(businessType.endDateLabel)} styles={styles} value={customer.moveOutDate || '-'} />
       </View>
@@ -164,7 +164,7 @@ export function CustomerCard({ accessActionLabel, accessChanging = false, custom
           ) : null}
           {onDelete ? (
             <Pressable accessibilityRole="button" disabled={deleting} onPress={onDelete} style={[styles.deleteAction, deleting && styles.disabledAction]}>
-              <Text style={styles.deleteActionText}>{t(deleting ? 'Deleting...' : 'Delete customer')}</Text>
+              <Text style={styles.deleteActionText}>{t(deleting ? 'Archiving...' : 'Archive customer')}</Text>
             </Pressable>
           ) : null}
         </View>

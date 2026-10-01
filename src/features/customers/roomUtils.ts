@@ -1,11 +1,30 @@
 import type { TenantRecord } from '../../shared/types/records';
+import { PG_ROOM_CAPACITY, ROOM_COUNT, ROOM_START } from './businessConfig';
 import { getCustomerStatus } from './customerUtils';
 
-export const ROOM_START = 101;
-export const ROOM_COUNT = 11;
+export { PG_ROOM_CAPACITY, ROOM_COUNT, ROOM_START } from './businessConfig';
 
 export const roomNumbers = Array.from({ length: ROOM_COUNT }, (_, index) => String(ROOM_START + index));
 export const bedLabels = ['Bed A', 'Bed B'] as const;
+
+export function normalizeLibrarySeat(value: unknown) {
+  const text = String(value || '').trim().toUpperCase().replace(/\s+/g, '');
+  const rawSeat = text.replace(/^SEAT\s*/, '');
+  const match = rawSeat.match(/^([A-Z])0*(\d{1,3})$/);
+
+  return match ? `${match[1]}${match[2].padStart(2, '0')}` : rawSeat;
+}
+
+export function getAllocationKey(value: unknown, businessType: unknown) {
+  const text = String(value || '').trim();
+
+  if (businessType === 'library') {
+    const seatMatch = text.match(/Seat\s+([A-Z]\d{1,3})/i) || text.match(/^([A-Z]\d{1,3})$/i);
+    return normalizeLibrarySeat(seatMatch?.[1] || text);
+  }
+
+  return parseRoomLabel(text).room;
+}
 
 function getTimestampDate(value: unknown) {
   if (value instanceof Date) return value;
@@ -58,6 +77,35 @@ export function getStayCheckout(customer: TenantRecord) {
   return null;
 }
 
+function getStayStart(customer: TenantRecord) {
+  for (const startValue of [customer.moveInDate, customer.checkInDate, customer.checkedInAt]) {
+    const parsed = parseStayDate(startValue, customer.moveInTime);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+export function staysOverlap(first: TenantRecord, second: TenantRecord) {
+  if ([getCustomerStatus(first), getCustomerStatus(second)].includes('cancelled')) return false;
+
+  const firstStart = getStayStart(first);
+  const secondStart = getStayStart(second);
+  const firstEnd = getStayCheckout(first);
+  const secondEnd = getStayCheckout(second);
+
+  return (firstStart?.getTime() ?? Number.NEGATIVE_INFINITY) < (secondEnd?.getTime() ?? Number.POSITIVE_INFINITY)
+    && (secondStart?.getTime() ?? Number.NEGATIVE_INFINITY) < (firstEnd?.getTime() ?? Number.POSITIVE_INFINITY);
+}
+
+export function canAllocateCustomer(candidate: TenantRecord, existing: TenantRecord[]) {
+  const conflicts = existing.filter((customer) => staysOverlap(customer, candidate));
+  const businessType = String(candidate.businessType || 'pg');
+
+  if (businessType === 'library' || businessType === 'hotel') return conflicts.length === 0;
+  return !conflicts.some((customer) => customer.businessType === 'hotel') && conflicts.length < PG_ROOM_CAPACITY;
+}
+
 export function parseRoomLabel(value: unknown) {
   const text = String(value || '');
   const roomMatch = text.match(/Room\s+(\d+)/i);
@@ -92,8 +140,12 @@ export function isRoomCustomer(customer: TenantRecord, now = Date.now()) {
   return Boolean(parseRoomLabel(customer.room).room);
 }
 
+export function isRoomOccupied(customer: TenantRecord, now = Date.now()) {
+  return getCustomerStatus(customer) !== 'booked' && isRoomCustomer(customer, now);
+}
+
 export function getRoomSummary(customers: TenantRecord[], now = Date.now()) {
-  const activeRoomCustomers = customers.filter((customer) => isRoomCustomer(customer, now));
+  const activeRoomCustomers = customers.filter((customer) => isRoomOccupied(customer, now));
   const occupiedRooms = new Set(activeRoomCustomers.map((customer) => parseRoomLabel(customer.room).room));
 
   return {
@@ -105,12 +157,12 @@ export function getRoomSummary(customers: TenantRecord[], now = Date.now()) {
 }
 
 export function getRoomOccupancy(customers: TenantRecord[], now = Date.now()) {
-  const activeRoomCustomers = customers.filter((customer) => isRoomCustomer(customer, now));
+  const activeRoomCustomers = customers.filter((customer) => isRoomOccupied(customer, now));
 
   return roomNumbers.map((room) => {
     const occupants = activeRoomCustomers.filter((customer) => parseRoomLabel(customer.room).room === room);
     const businessType = occupants.some((customer) => customer.businessType === 'hotel') ? 'hotel' : occupants.length ? 'pg' : '';
-    const capacity = businessType === 'hotel' ? 1 : 2;
+    const capacity = businessType === 'hotel' ? 1 : PG_ROOM_CAPACITY;
     const guestCount = occupants.reduce(
       (count, customer) => count + 1 + (customer.businessType === 'hotel' && Array.isArray(customer.additionalGuests) ? customer.additionalGuests.filter(Boolean).length : 0),
       0,
@@ -124,6 +176,38 @@ export function getRoomOccupancy(customers: TenantRecord[], now = Date.now()) {
       occupants,
       room,
       status: occupants.length >= capacity ? 'Full' : occupants.length === 1 ? 'Partial' : 'Open',
+    };
+  });
+}
+
+export function getInventoryCalendar(customers: TenantRecord[], start = new Date(), days = 7) {
+  return Array.from({ length: days }, (_, offset) => {
+    const date = new Date(start.getFullYear(), start.getMonth(), start.getDate() + offset);
+    const nextDate = new Date(date.getFullYear(), date.getMonth(), date.getDate() + 1);
+    const dayKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    const dayWindow = { id: dayKey, moveInDate: dayKey, moveOutDate: `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, '0')}-${String(nextDate.getDate()).padStart(2, '0')}`, moveOutTime: '00:00', status: 'booked' } as TenantRecord;
+    const active = customers.filter((customer) =>
+      ['active', 'booked', 'checked in', 'occupied'].includes(getCustomerStatus(customer))
+      && staysOverlap(customer, dayWindow));
+    const roomCustomers = active.filter((customer) => ['pg', 'hotel'].includes(String(customer.businessType || 'pg')));
+    const occupiedRooms = new Set(roomCustomers.map((customer) => parseRoomLabel(customer.room).room).filter(Boolean));
+    const openBeds = roomNumbers.reduce((total, room) => {
+      const occupants = roomCustomers.filter((customer) => parseRoomLabel(customer.room).room === room);
+      return total + (occupants.some((customer) => customer.businessType === 'hotel') ? 0 : Math.max(0, PG_ROOM_CAPACITY - occupants.length));
+    }, 0);
+    const busySeats = new Set(active
+      .filter((customer) => customer.businessType === 'library')
+      .map((customer) => getAllocationKey(customer.room, 'library'))
+      .filter(Boolean));
+
+    return {
+      active,
+      busySeats: busySeats.size,
+      date,
+      dayKey,
+      occupiedRooms: occupiedRooms.size,
+      openBeds,
+      reservations: active.filter((customer) => getCustomerStatus(customer) === 'booked').length,
     };
   });
 }

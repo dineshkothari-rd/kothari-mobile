@@ -1,3 +1,5 @@
+import { PG_ROOM_CAPACITY } from './businessConfig';
+
 export const businessTypes = {
   hotel: {
     allocationCapacity: 1,
@@ -43,7 +45,7 @@ export const businessTypes = {
     usesTimeFields: false,
   },
   pg: {
-    allocationCapacity: 2,
+    allocationCapacity: PG_ROOM_CAPACITY,
     allocationHelp: 'Pick a room with space available.',
     allocationTitle: 'Available PG rooms',
     customerLabel: 'Tenant',

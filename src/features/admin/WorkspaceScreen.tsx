@@ -31,11 +31,12 @@ type WorkspaceScreenProps = {
 export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
   const [activeTab, setActiveTab] = useState('overview');
   const [moreView, setMoreView] = useState<MoreView>('enquiries');
+  const [customerStart, setCustomerStart] = useState({ action: '', mode: 'All', status: '' });
   const [refreshKey, setRefreshKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
   const { colors } = useAppTheme();
   const { t } = useLanguage();
-  const styles = createStyles(colors);
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const insets = useSafeAreaInsets();
 
   useEffect(() => {
@@ -59,8 +60,20 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
   }
 
   function openDestination(destination: OverviewDestination) {
-    if (destination === 'customers' || destination === 'money') {
-      setActiveTab(destination === 'customers' ? 'tenants' : 'payments');
+    if (destination === 'arrivals' || destination === 'attention' || destination === 'customers' || destination === 'departures') {
+      setCustomerStart(destination === 'arrivals'
+        ? { action: 'arrival', mode: 'All', status: 'reserved' }
+        : destination === 'departures'
+          ? { action: 'departure', mode: 'All', status: 'active' }
+          : destination === 'attention'
+            ? { action: '', mode: 'Needs attention', status: '' }
+            : { action: '', mode: 'All', status: '' });
+      setActiveTab('tenants');
+      return;
+    }
+
+    if (destination === 'money') {
+      setActiveTab('payments');
       return;
     }
 
@@ -96,7 +109,7 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
           {activeTab === 'overview' ? (
             <OperationsOverviewScreen onNavigate={openDestination} />
           ) : activeTab === 'tenants' ? (
-            <CustomersScreen isAdmin={admin.role === 'admin'} />
+            <CustomersScreen initialActionFilter={customerStart.action} initialMode={customerStart.mode} initialStatusFilter={customerStart.status} isAdmin={admin.role === 'admin'} />
           ) : activeTab === 'payments' ? (
             <MoneyScreen />
           ) : activeTab === 'more' ? (
@@ -132,7 +145,10 @@ export function WorkspaceScreen({ admin, onSignOut }: WorkspaceScreenProps) {
               <Pressable
                 accessibilityRole="button"
                 key={tab.id}
-                onPress={() => setActiveTab(tab.id)}
+                onPress={() => {
+                  if (tab.id === 'tenants') setCustomerStart({ action: '', mode: 'All', status: '' });
+                  setActiveTab(tab.id);
+                }}
                 style={[styles.navItem, active && styles.navItemActive]}
               >
                 <Text style={[styles.navMark, active && styles.navMarkActive]}>{tab.mark}</Text>

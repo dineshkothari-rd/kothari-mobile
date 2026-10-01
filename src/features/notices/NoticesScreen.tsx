@@ -69,7 +69,7 @@ function formatDate(createdAt: NoticeRecord['createdAt']) {
 export function NoticesScreen() {
   const { colors } = useAppTheme();
   const { t } = useLanguage();
-  const styles = createStyles(colors);
+  const styles = useMemo(() => createStyles(colors), [colors]);
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [editingNotice, setEditingNotice] = useState<NoticeRecord | null>(null);
